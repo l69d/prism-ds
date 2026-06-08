@@ -135,3 +135,44 @@ export function betaPdfGrid(a: number, b: number, n = 120) {
   const area = raw.reduce((s, v) => s + v * dx, 0) || 1;
   return { xs, ys: raw.map((v) => v / area) };
 }
+
+/** Solve a linear system A x = y (Gaussian elimination with partial pivot). */
+export function solveLinear(A: number[][], y: number[]): number[] {
+  const n = A.length;
+  const M = A.map((row, i) => [...row, y[i]]);
+  for (let c = 0; c < n; c++) {
+    let piv = c;
+    for (let r = c + 1; r < n; r++) if (Math.abs(M[r][c]) > Math.abs(M[piv][c])) piv = r;
+    [M[c], M[piv]] = [M[piv], M[c]];
+    const d = M[c][c] || 1e-9;
+    for (let j = c; j <= n; j++) M[c][j] /= d;
+    for (let r = 0; r < n; r++) {
+      if (r === c) continue;
+      const f = M[r][c];
+      for (let j = c; j <= n; j++) M[r][j] -= f * M[c][j];
+    }
+  }
+  return M.map((row) => row[n]);
+}
+
+/** Least-squares polynomial fit; returns coefficients low->high order. */
+export function polyfit(xs: number[], ys: number[], degree: number): number[] {
+  const cols = degree + 1;
+  const X = xs.map((x) => Array.from({ length: cols }, (_, j) => x ** j));
+  const XtX = Array.from({ length: cols }, (_, i) =>
+    Array.from({ length: cols }, (_, j) => X.reduce((s, row) => s + row[i] * row[j], 0)),
+  );
+  for (let i = 0; i < cols; i++) XtX[i][i] += 1e-7;
+  const Xty = Array.from({ length: cols }, (_, i) => X.reduce((s, row, k) => s + row[i] * ys[k], 0));
+  return solveLinear(XtX, Xty);
+}
+
+export const polyval = (c: number[], x: number) => c.reduce((s, ci, i) => s + ci * x ** i, 0);
+
+/** Coefficient of determination R^2 between observed ys and predictions. */
+export function rSquared(ys: number[], preds: number[]): number {
+  const m = mean(ys);
+  const ssTot = ys.reduce((s, y) => s + (y - m) ** 2, 0) || 1e-9;
+  const ssRes = ys.reduce((s, y, i) => s + (y - preds[i]) ** 2, 0);
+  return 1 - ssRes / ssTot;
+}
