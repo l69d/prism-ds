@@ -5,6 +5,8 @@ import { Callout } from "@/components/content/callout";
 import { KeyIdea } from "@/components/content/key-idea";
 import { CodeBlock } from "@/components/content/code-block";
 import { Quiz } from "@/components/content/quiz";
+import { InterviewProblem } from "@/components/content/interview-problem";
+import { MB } from "@/components/content/math";
 
 export default function Lesson() {
   return (
@@ -81,6 +83,96 @@ print(df.head())`}</CodeBlock>
         { text: "A WHERE clause filtering on the average", why: "WHERE filters rows; it cannot attach a per-group aggregate as a new column, and it runs before aggregation." },
         { text: "ORDER BY department, salary", why: "Sorting arranges rows but computes no average and adds no comparison column." },
       ]} />
-    </>
+    <h2>Interview practice</h2>
+<InterviewProblem question="What is the difference between WHERE and HAVING, and when does each get evaluated?" difficulty="easy" tag="Conceptual">
+  <p><strong>WHERE</strong> filters individual rows <strong>before</strong> aggregation; <strong>HAVING</strong> filters groups <strong>after</strong> aggregation. They run at different stages of the logical query pipeline:</p>
+  <ul>
+    <li><strong>FROM / JOIN</strong> &rarr; assemble rows</li>
+    <li><strong>WHERE</strong> &rarr; drop rows that fail a row-level predicate (cannot reference aggregates like <strong>COUNT()</strong>)</li>
+    <li><strong>GROUP BY</strong> &rarr; collapse rows into groups</li>
+    <li><strong>HAVING</strong> &rarr; drop whole groups using aggregate predicates</li>
+    <li><strong>SELECT &rarr; ORDER BY &rarr; LIMIT</strong></li>
+  </ul>
+  <p>A common interview trap: &quot;filter for customers with more than 5 orders.&quot; That predicate is on an aggregate, so it must live in HAVING, not WHERE. Conversely, filtering to <strong>only 2024 orders</strong> before counting belongs in WHERE so the aggregate is computed over the right rows. Pushing row filters into WHERE is also faster, because fewer rows reach the GROUP BY.</p>
+  <CodeBlock language="python" filename="where_vs_having.py">{`-- 2024 orders only (WHERE), then keep heavy buyers (HAVING)
+SELECT customer_id, COUNT(*) AS n_orders
+FROM orders
+WHERE order_date >= '2024-01-01'   -- pre-aggregation, per row
+GROUP BY customer_id
+HAVING COUNT(*) > 5                 -- post-aggregation, per group
+ORDER BY n_orders DESC;`}</CodeBlock>
+</InterviewProblem>
+<InterviewProblem question="A LEFT JOIN of orders to a filtered customers table returns fewer rows than expected. The candidate put a customer-region filter in the WHERE clause. Diagnose and fix." difficulty="medium" tag="Applied">
+  <p>This is the classic &quot;a WHERE on the right table silently turns your LEFT JOIN into an INNER JOIN&quot; bug. With a LEFT JOIN, unmatched left rows survive but get <strong>NULL</strong> in every right-table column. A WHERE predicate like <strong>c.region = &apos;EU&apos;</strong> then evaluates to NULL (not TRUE) for those unmatched rows, so they get dropped &mdash; defeating the purpose of the outer join.</p>
+  <p>The fix is to move the right-table filter into the <strong>ON</strong> clause, so it constrains <strong>which rows match</strong> rather than which survive:</p>
+  <CodeBlock language="python" filename="join_filter.py">{`-- WRONG: WHERE silently drops unmatched orders
+SELECT o.order_id, c.region
+FROM orders o
+LEFT JOIN customers c ON c.customer_id = o.customer_id
+WHERE c.region = 'EU';          -- NULL region rows eliminated
+
+-- RIGHT: filter lives in ON; all orders kept
+SELECT o.order_id, c.region
+FROM orders o
+LEFT JOIN customers c
+  ON c.customer_id = o.customer_id
+ AND c.region = 'EU';           -- non-EU/unmatched -> region is NULL`}</CodeBlock>
+  <p><strong>Rule of thumb:</strong> a predicate on the <strong>left</strong> (preserved) table can sit in WHERE; a predicate on the <strong>right</strong> table of a LEFT JOIN almost always belongs in ON unless you deliberately want INNER-JOIN semantics. The one legitimate WHERE use is the anti-join pattern <strong>WHERE c.customer_id IS NULL</strong> to find orders with no matching customer.</p>
+</InterviewProblem>
+<InterviewProblem question="Compute each employee's running total of salary spend within their department, ordered by hire date, and also rank employees by salary within department. Explain ROW_NUMBER vs RANK vs DENSE_RANK." difficulty="medium" tag="Coding">
+  <p>Window functions compute a value <strong>per row</strong> over a related set of rows (the &quot;window&quot;) without collapsing them like GROUP BY does. <strong>PARTITION BY</strong> defines the groups; <strong>ORDER BY</strong> inside the window defines row order; the frame (default <strong>RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW</strong>) defines the running window.</p>
+  <CodeBlock language="python" filename="window_funcs.py">{`SELECT
+  emp_id,
+  dept_id,
+  salary,
+  -- running total of salary by hire order within dept
+  SUM(salary) OVER (
+    PARTITION BY dept_id
+    ORDER BY hire_date
+    ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+  ) AS running_dept_spend,
+  ROW_NUMBER() OVER (PARTITION BY dept_id ORDER BY salary DESC) AS rn,
+  RANK()       OVER (PARTITION BY dept_id ORDER BY salary DESC) AS rnk,
+  DENSE_RANK() OVER (PARTITION BY dept_id ORDER BY salary DESC) AS drnk
+FROM employees;`}</CodeBlock>
+  <p>The three ranking functions differ on how they treat ties:</p>
+  <ul>
+    <li><strong>ROW_NUMBER</strong> &mdash; always unique (1,2,3,4); ties broken arbitrarily (or by extra ORDER BY keys).</li>
+    <li><strong>RANK</strong> &mdash; ties share a rank, then it <strong>skips</strong> (1,1,3,4): two top earners both rank 1, next is 3.</li>
+    <li><strong>DENSE_RANK</strong> &mdash; ties share a rank with <strong>no gaps</strong> (1,1,2,3).</li>
+  </ul>
+  <p>Use ROW_NUMBER to deduplicate (&quot;keep the latest record per key&quot;: filter <strong>rn = 1</strong>), and RANK / DENSE_RANK for leaderboards where ties should be honored. Note you cannot put a window function in WHERE &mdash; wrap the query in a CTE or subquery and filter on the computed column outside.</p>
+</InterviewProblem>
+<InterviewProblem question="Write a query that, for each user, returns the number of days between their first and second purchase (NULL if they purchased only once). Then describe how you would compute a 7-day retention rate." difficulty="hard" tag="Case">
+  <p>The gap-to-second-purchase is a textbook use of <strong>LAG/LEAD</strong> or row-numbered self-comparison. Rank each user&apos;s purchases by date, pivot the first two, and difference them:</p>
+  <CodeBlock language="python" filename="second_purchase_gap.py">{`WITH ranked AS (
+  SELECT
+    user_id,
+    purchase_date,
+    ROW_NUMBER() OVER (
+      PARTITION BY user_id ORDER BY purchase_date
+    ) AS seq
+  FROM purchases
+)
+SELECT
+  f.user_id,
+  -- NULL automatically when there is no second purchase
+  (s.purchase_date - f.purchase_date) AS days_to_second
+FROM      ranked f
+LEFT JOIN ranked s
+  ON s.user_id = f.user_id AND s.seq = 2
+WHERE f.seq = 1;`}</CodeBlock>
+  <p>The LEFT JOIN preserves single-purchase users and yields NULL for their gap, exactly as required. (In MySQL use <strong>DATEDIFF</strong>; in some engines use <strong>LEAD(purchase_date) OVER (...)</strong> instead of the self-join.)</p>
+  <p><strong>7-day retention</strong> measures the share of a signup cohort that takes a qualifying action within 7 days of joining. The pattern:</p>
+  <ul>
+    <li>Define the cohort: each user&apos;s <strong>signup_date</strong> (often bucketed by signup week).</li>
+    <li>Join activity events and keep those where <strong>event_date</strong> falls in <strong>(signup_date, signup_date + 7]</strong>.</li>
+    <li>Per cohort, divide distinct retained users by the cohort size.</li>
+  </ul>
+  <MB>{"\\text{retention}_{7d} = \\frac{|\\{u : \\exists\\, \\text{event in } (t_u,\\, t_u+7]\\}|}{|\\text{cohort}|}"}</MB>
+  <p>Use <strong>COUNT(DISTINCT user_id)</strong> in the numerator so a user with many events is counted once, and a <strong>LEFT JOIN</strong> from the cohort so users with zero events still appear (counting as not-retained) rather than being dropped &mdash; otherwise retention is biased upward.</p>
+</InterviewProblem>
+
+      </>
   );
 }

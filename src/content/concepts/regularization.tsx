@@ -6,6 +6,7 @@ import { KeyIdea } from "@/components/content/key-idea";
 import { M, MB } from "@/components/content/math";
 import { CodeBlock } from "@/components/content/code-block";
 import { Quiz } from "@/components/content/quiz";
+import { InterviewProblem } from "@/components/content/interview-problem";
 
 export default function Lesson() {
   return (
@@ -65,6 +66,76 @@ print("nonzero coefs:", (lasso[-1].coef_ != 0).sum())`}</CodeBlock>
         { text: "Both produce identical coefficients since they minimize the same error term", why: "They share the error term but differ in penalty, giving different solutions." },
         { text: "Neither changes the coefficients because regularization only affects the intercept", why: "Regularization penalizes the feature weights; the intercept is typically left unpenalized." },
       ]} />
-    </>
+    <h2>Interview practice</h2>
+
+<InterviewProblem question="What is the difference between L1 (Lasso) and L2 (Ridge) regularization, and why does L1 produce sparse solutions?" difficulty="easy" tag="Conceptual">
+  <p>Both add a penalty on coefficient magnitude to the loss. Ridge adds the squared <M>{"\\ell_2"}</M> norm, Lasso adds the <M>{"\\ell_1"}</M> norm:</p>
+  <MB>{"J_{\\text{ridge}}(\\beta)=\\|y-X\\beta\\|_2^2+\\lambda\\|\\beta\\|_2^2,\\qquad J_{\\text{lasso}}(\\beta)=\\|y-X\\beta\\|_2^2+\\lambda\\|\\beta\\|_1"}</MB>
+  <ul>
+    <li><strong>Ridge</strong> shrinks all coefficients smoothly toward zero but rarely sets any exactly to zero. It keeps every feature.</li>
+    <li><strong>Lasso</strong> drives many coefficients exactly to zero, performing automatic feature selection.</li>
+  </ul>
+  <p>The geometric intuition: the constraint region for <M>{"\\ell_1"}</M> is a diamond (rotated square) with sharp corners on the axes, while <M>{"\\ell_2"}</M> is a smooth ball. The elliptical contours of the squared-error loss are far more likely to first touch a corner of the diamond, and a corner sits on an axis, meaning some coordinate is exactly zero. The smooth ball has no corners, so the optimum almost never lands exactly on an axis.</p>
+  <p>Analytically, soft-thresholding makes this concrete: the Lasso solution for one coordinate (orthonormal design) is <M>{"\\hat{\\beta}_j=\\operatorname{sign}(z_j)\\,(|z_j|-\\lambda)_+"}</M>, which is exactly zero whenever <M>{"|z_j|\\le\\lambda"}</M>. Ridge instead scales: <M>{"\\hat{\\beta}_j=z_j/(1+\\lambda)"}</M>, never reaching zero for finite <M>{"\\lambda"}</M>.</p>
+</InterviewProblem>
+
+<InterviewProblem question="Why must you standardize features before applying L1 or L2 regularization?" difficulty="medium" tag="Applied">
+  <p>The penalty is applied to coefficient magnitudes, but coefficient magnitude depends on the scale of the feature. If feature A is measured in dollars (range 0 to 1,000,000) and feature B is a fraction (range 0 to 1), then to have the same effect on the prediction, A&apos;s coefficient must be roughly a million times smaller than B&apos;s.</p>
+  <ul>
+    <li>The penalty <M>{"\\lambda\\sum_j \\beta_j^2"}</M> therefore barely touches the tiny coefficient on the large-scale feature and crushes the large coefficient on the small-scale feature, purely because of units.</li>
+    <li>This means regularization strength is silently allocated by measurement units rather than by predictive importance, which is almost never what you want.</li>
+  </ul>
+  <p>The fix: standardize each feature to zero mean and unit variance (or min-max scale) so all coefficients live on a comparable scale and the penalty treats them fairly. In practice, fit the scaler on the training fold only and apply it inside a pipeline to avoid leakage. Note the intercept should not be penalized, since it only shifts predictions and carries no complexity.</p>
+</InterviewProblem>
+
+<InterviewProblem question="How would you choose lambda, and what is the bias-variance trade-off as lambda increases?" difficulty="medium" tag="Case">
+  <p>As <M>{"\\lambda"}</M> grows from 0 to <M>{"\\infty"}</M>:</p>
+  <ul>
+    <li>At <M>{"\\lambda=0"}</M> you recover ordinary least squares: low bias, high variance, prone to overfitting (especially when features outnumber samples or are collinear).</li>
+    <li>As <M>{"\\lambda\\to\\infty"}</M> all coefficients are forced toward zero: the model collapses to predicting the mean, giving high bias and near-zero variance (underfitting).</li>
+    <li>The sweet spot trades a small increase in bias for a large reduction in variance, minimizing expected test error.</li>
+  </ul>
+  <p>To pick it, use <strong>k-fold cross-validation</strong> over a log-spaced grid of <M>{"\\lambda"}</M> values and select the one minimizing validation error. A common robustification is the <strong>one-standard-error rule</strong>: pick the largest (simplest) <M>{"\\lambda"}</M> whose CV error is within one standard error of the minimum, favoring a sparser, more stable model.</p>
+  <CodeBlock language="python" filename="select_lambda.py">{`import numpy as np
+from sklearn.linear_model import RidgeCV, LassoCV
+from sklearn.pipeline import make_pipeline
+from sklearn.preprocessing import StandardScaler
+
+alphas = np.logspace(-4, 4, 50)  # sklearn calls lambda "alpha"
+
+# Ridge with built-in efficient leave-one-out CV
+ridge = make_pipeline(StandardScaler(), RidgeCV(alphas=alphas))
+ridge.fit(X_train, y_train)
+print("ridge best alpha:", ridge[-1].alpha_)
+
+# Lasso with 5-fold CV; coordinate descent over the path
+lasso = make_pipeline(StandardScaler(), LassoCV(alphas=alphas, cv=5, n_jobs=-1))
+lasso.fit(X_train, y_train)
+print("lasso best alpha:", lasso[-1].alpha_)
+print("features kept:", int(np.sum(lasso[-1].coef_ != 0)))`}</CodeBlock>
+</InterviewProblem>
+
+<InterviewProblem question="When would you prefer elastic net over pure Lasso, and what problem does it solve?" difficulty="hard" tag="Conceptual">
+  <p>Elastic net combines both penalties:</p>
+  <MB>{"J(\\beta)=\\|y-X\\beta\\|_2^2+\\lambda\\big(\\alpha\\|\\beta\\|_1+(1-\\alpha)\\|\\beta\\|_2^2\\big)"}</MB>
+  <p>It exists to fix two failure modes of pure Lasso:</p>
+  <ul>
+    <li><strong>Groups of correlated features.</strong> When several predictors are highly correlated, Lasso tends to arbitrarily pick one and zero out the rest, which is unstable: a tiny data perturbation can flip which one survives. The <M>{"\\ell_2"}</M> term encourages a <em>grouping effect</em>, spreading weight across correlated features so they tend to enter or leave together.</li>
+    <li><strong>The p &gt; n regime.</strong> When features outnumber samples, Lasso can select at most n features before it saturates. Elastic net&apos;s ridge component removes this ceiling, allowing more than n features to be retained.</li>
+  </ul>
+  <p>The mixing parameter <M>{"\\alpha"}</M> interpolates: <M>{"\\alpha=1"}</M> is pure Lasso, <M>{"\\alpha=0"}</M> is pure Ridge. You tune both <M>{"\\lambda"}</M> and <M>{"\\alpha"}</M> by cross-validation. Use elastic net when you want Lasso-style sparsity but your features are correlated or wide; use plain Lasso when features are roughly independent and you want the most aggressive selection.</p>
+</InterviewProblem>
+
+<InterviewProblem question="Derive the closed-form Ridge solution and show why it is always invertible even when X is rank-deficient." difficulty="hard" tag="Math">
+  <p>Start from the Ridge objective and set its gradient to zero:</p>
+  <MB>{"J(\\beta)=(y-X\\beta)^\\top(y-X\\beta)+\\lambda\\beta^\\top\\beta"}</MB>
+  <MB>{"\\nabla_\\beta J=-2X^\\top(y-X\\beta)+2\\lambda\\beta=0"}</MB>
+  <p>Rearranging gives the normal equations:</p>
+  <MB>{"(X^\\top X+\\lambda I)\\,\\hat{\\beta}=X^\\top y\\quad\\Longrightarrow\\quad\\hat{\\beta}=(X^\\top X+\\lambda I)^{-1}X^\\top y"}</MB>
+  <p>Why is the matrix invertible? <M>{"X^\\top X"}</M> is symmetric positive semidefinite, so its eigenvalues satisfy <M>{"\\mu_i\\ge 0"}</M>. Adding <M>{"\\lambda I"}</M> shifts every eigenvalue up by <M>{"\\lambda"}</M>, giving eigenvalues <M>{"\\mu_i+\\lambda"}</M>. For any <M>{"\\lambda>0"}</M> these are all strictly positive, so <M>{"X^\\top X+\\lambda I"}</M> is positive definite and hence invertible, even when <M>{"X^\\top X"}</M> is singular (collinear features or <M>{"p>n"}</M>).</p>
+  <p>This also explains numerical stability: in the eigenbasis each coefficient is shrunk by the factor <M>{"\\mu_i/(\\mu_i+\\lambda)"}</M>. Directions with tiny eigenvalues (where OLS blows up) are damped the most, which is exactly why Ridge tames variance from near-collinear features.</p>
+</InterviewProblem>
+
+      </>
   );
 }

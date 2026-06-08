@@ -6,6 +6,7 @@ import { KeyIdea } from "@/components/content/key-idea";
 import { M, MB } from "@/components/content/math";
 import { CodeBlock } from "@/components/content/code-block";
 import { Quiz } from "@/components/content/quiz";
+import { InterviewProblem } from "@/components/content/interview-problem";
 
 export default function Lesson() {
   return (
@@ -73,6 +74,60 @@ print(round(beta[1], 2))           # ~2.0 -> true effect recovered`}</CodeBlock>
         { text: "Also condition on a post-treatment variable like a mid-study lab result to be safe", why: "That is often a collider or mediator; conditioning on it opens spurious paths or removes part of the real effect." },
         { text: "Collect far more data so the confounding averages out", why: "Confounding is bias, not variance; more data shrinks the confidence interval around the wrong number." },
       ]} />
-    </>
+    <h2>Interview practice</h2>
+<InterviewProblem question="Explain the difference between correlation and causation using the language of potential outcomes. What is the fundamental problem of causal inference?" difficulty="easy" tag="Conceptual">
+  <p>For a binary treatment <M>{"T"}</M>, each unit has two <strong>potential outcomes</strong>: <M>{"Y(1)"}</M> if treated and <M>{"Y(0)"}</M> if not. The individual causal effect is <M>{"Y(1) - Y(0)"}</M>.</p>
+  <p>The <strong>fundamental problem of causal inference</strong> is that we only ever observe one of the two for each unit: <M>{"Y = T\\,Y(1) + (1-T)\\,Y(0)"}</M>. The counterfactual is missing, so the individual effect is never directly observable.</p>
+  <p>A correlation tells us <M>{"E[Y \\mid T=1] - E[Y \\mid T=0]"}</M>, an <strong>observational</strong> contrast. A causal effect is <M>{"E[Y(1)] - E[Y(0)]"}</M>. These coincide only when treatment assignment is independent of the potential outcomes, i.e. <M>{"\\{Y(0), Y(1)\\} \\perp T"}</M>, which randomization guarantees but observational data does not. The gap between them is <strong>confounding</strong> (and selection) bias.</p>
+</InterviewProblem>
+<InterviewProblem question="What is Pearl's ladder of causation, and why can a model trained only on observational data not answer interventional questions without extra assumptions?" difficulty="medium" tag="Conceptual">
+  <p>Pearl describes three rungs of increasing causal power:</p>
+  <ul>
+    <li><strong>Association</strong> (&quot;seeing&quot;): <M>{"P(Y \\mid X)"}</M>. Pure prediction. This is all standard supervised ML reaches.</li>
+    <li><strong>Intervention</strong> (&quot;doing&quot;): <M>{"P(Y \\mid do(X))"}</M> &mdash; the distribution of <M>{"Y"}</M> if we forcibly set <M>{"X"}</M>, severing the arrows into <M>{"X"}</M>.</li>
+    <li><strong>Counterfactuals</strong> (&quot;imagining&quot;): <M>{"P(Y_x \\mid X=x', Y=y')"}</M> &mdash; what <M>{"Y"}</M> would have been for a specific unit had <M>{"X"}</M> differed, given what actually happened.</li>
+  </ul>
+  <p>The key point: <M>{"P(Y \\mid X)"}</M> and <M>{"P(Y \\mid do(X))"}</M> are generally <strong>not equal</strong>. Conditioning passively lets information flow through confounders; intervening cuts those paths. A confounder <M>{"Z"}</M> with <M>{"Z \\to X"}</M> and <M>{"Z \\to Y"}</M> creates a backdoor that inflates the observed association.</p>
+  <p>Observational data only identifies rung 1. To climb to rung 2 you need a <strong>causal model</strong> (a DAG plus assumptions like ignorability / no unmeasured confounding) so the <M>{"do"}</M>-operator can be rewritten in terms of observed conditional distributions &mdash; e.g. the backdoor adjustment formula. Without such structural assumptions, the data alone are silent about interventions.</p>
+</InterviewProblem>
+<InterviewProblem question="You have a DAG with treatment T, outcome Y, an observed confounder Z (Z to T and Z to Y), and a collider C (T to C and Y to C). Which variables do you adjust for to estimate the causal effect of T on Y, and what happens if you naively control for everything?" difficulty="hard" tag="Applied">
+  <p>Use the <strong>backdoor criterion</strong>. A valid adjustment set <M>{"S"}</M> must block every backdoor path (paths into <M>{"T"}</M>) and contain no descendants of <M>{"T"}</M>.</p>
+  <ul>
+    <li>The backdoor path <M>{"T \\leftarrow Z \\to Y"}</M> is open and must be blocked, so we <strong>condition on <M>{"Z"}</M></strong>.</li>
+    <li>The collider <M>{"C"}</M> is a descendant of <M>{"T"}</M> and sits on the path <M>{"T \\to C \\leftarrow Y"}</M>. This path is <strong>already blocked</strong> because a collider blocks a path when left alone. <strong>Conditioning on <M>{"C"}</M> would open it</strong>, inducing a spurious <M>{"T"}</M>&ndash;<M>{"Y"}</M> association (collider / selection bias). So we must <strong>not</strong> adjust for <M>{"C"}</M>.</li>
+  </ul>
+  <p>Hence the valid set is <M>{"S = \\{Z\\}"}</M>. &quot;Control for everything&quot; is wrong: throwing the collider into a regression opens a non-causal path and biases the estimate. The identified effect is the backdoor adjustment:</p>
+  <MB>{"P(Y \\mid do(T=t)) = \\sum_{z} P(Y \\mid T=t, Z=z)\\,P(Z=z)"}</MB>
+  <p>Equivalently, the average treatment effect is the confounder-weighted difference in conditional means.</p>
+</InterviewProblem>
+<InterviewProblem question="In a randomized A/B test, write code to estimate the average treatment effect and explain why randomization lets you skip confounder adjustment. Then sketch how the estimate would change under a regression-adjustment (CUPED-style) improvement." difficulty="medium" tag="Coding">
+  <p>Randomization makes <M>{"T \\perp \\{Y(0), Y(1)\\}"}</M> by design, so there are no open backdoor paths and the simple difference in means is unbiased for the ATE:</p>
+  <MB>{"\\widehat{\\text{ATE}} = \\bar{Y}_{T=1} - \\bar{Y}_{T=0}"}</MB>
+  <CodeBlock language="python" filename="ate_ab_test.py">{`import numpy as np
+from scipy import stats
+
+def estimate_ate(y, t):
+    """Difference-in-means ATE for a randomized experiment.
+    y: outcomes, t: binary treatment indicator."""
+    y1, y0 = y[t == 1], y[t == 0]
+    ate = y1.mean() - y0.mean()
+    # Welch standard error (unequal variances)
+    se = np.sqrt(y1.var(ddof=1) / len(y1) + y0.var(ddof=1) / len(y0))
+    z = ate / se
+    p = 2 * (1 - stats.norm.cdf(abs(z)))
+    return ate, se, p
+
+# Regression adjustment with a pre-experiment covariate x (CUPED idea):
+# regress y on t and a centered covariate to soak up outcome variance.
+def estimate_ate_adjusted(y, t, x):
+    x_c = x - x.mean()                 # center so the t coef stays the ATE
+    X = np.column_stack([np.ones_like(t), t, x_c])
+    beta, *_ = np.linalg.lstsq(X, y, rcond=None)
+    return beta[1]                     # coefficient on t is the adjusted ATE
+`}</CodeBlock>
+  <p>The covariate <M>{"x"}</M> (a pre-experiment metric) is not a confounder here &mdash; because of randomization it is balanced across arms, so adjusting for it does not change the <strong>expected</strong> estimate. What it does is reduce residual variance, shrinking the standard error and tightening the confidence interval. This is why variance-reduction techniques like CUPED accelerate experiments without introducing bias.</p>
+</InterviewProblem>
+
+      </>
   );
 }

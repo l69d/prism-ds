@@ -5,6 +5,8 @@ import { Callout } from "@/components/content/callout";
 import { KeyIdea } from "@/components/content/key-idea";
 import { M, MB } from "@/components/content/math";
 import { Quiz } from "@/components/content/quiz";
+import { InterviewProblem } from "@/components/content/interview-problem";
+import { CodeBlock } from "@/components/content/code-block";
 
 export default function Lesson() {
   return (
@@ -51,6 +53,68 @@ export default function Lesson() {
         { text: "Build the most complex model possible to capture churn patterns.", why: "Model complexity is a means, not a problem definition; it sets no measurable success criterion." },
         { text: "Predict the exact churn date for every user.", why: "Over-specifies the target beyond what the offer decision needs and is far harder to label reliably." },
       ]} />
-    </>
+    <h2>Interview practice</h2>
+<InterviewProblem question="A product manager says 'users seem unhappy with search — can you look into it with data?' Walk me through how you'd turn that into a scoped, measurable project." difficulty="easy" tag="Case">
+  <p>The ask is vague on three axes: <strong>who</strong>, <strong>what outcome</strong>, and <strong>what success looks like</strong>. I&apos;d structure it before touching data.</p>
+  <ul>
+    <li><strong>Clarify the business goal.</strong> &quot;Unhappy&quot; is a proxy. Is the real concern retention, revenue, or support load? Pin the one north-star metric the team owns.</li>
+    <li><strong>Translate to a measurable target.</strong> Turn &quot;unhappy with search&quot; into something observable: zero-result rate, search-to-click rate, reformulation rate, or search-session abandonment. Pick the metric that most directly moves the business goal.</li>
+    <li><strong>Scope the population and window.</strong> Which surface (web vs app), which users (new vs returning), what time range? A scoped slice beats a boil-the-ocean analysis.</li>
+    <li><strong>Decide diagnosis vs prediction.</strong> Here the ask is diagnostic (&quot;look into it&quot;), so the deliverable is a ranked list of drivers, not a model. State that explicitly so nobody expects a deployed classifier.</li>
+    <li><strong>Define done.</strong> &quot;A one-page readout naming the top 2-3 failure modes by volume, each with an estimated impact on the north-star metric and a candidate fix.&quot;</li>
+  </ul>
+  <p>The pattern: <strong>business goal &rarr; observable metric &rarr; scoped population &rarr; problem type &rarr; concrete deliverable</strong>. Naming the deliverable up front is what prevents scope creep.</p>
+</InterviewProblem>
+<InterviewProblem question="Why is choosing the wrong success metric one of the most expensive mistakes in framing a DS problem, and how do you guard against it?" difficulty="medium" tag="Conceptual">
+  <p>Because everything downstream optimizes the metric you wrote down, not the outcome you wanted. If the metric is misaligned, a &quot;successful&quot; model can actively hurt the business — this is <strong>Goodhart&apos;s law</strong>: when a measure becomes a target, it stops being a good measure.</p>
+  <ul>
+    <li><strong>Proxy gaps.</strong> Optimizing click-through-rate on recommendations can promote clickbait that tanks long-term retention. The proxy (clicks) diverged from the goal (satisfied, returning users).</li>
+    <li><strong>Threshold blindness.</strong> Optimizing raw accuracy on a fraud problem that is 99% legitimate rewards a model that never flags fraud.</li>
+    <li><strong>Single-metric tunnel vision.</strong> A latency win that quietly drops recall may pass the headline metric while breaking the product.</li>
+  </ul>
+  <p>Guards I use:</p>
+  <ul>
+    <li>Separate the <strong>true goal metric</strong> (often slow/lagging, e.g. 30-day retention) from <strong>proxy metrics</strong> the model can train on, and verify the proxy actually correlates with the goal.</li>
+    <li>Pair the optimization metric with <strong>guardrail metrics</strong> that must not regress (e.g. optimize recall subject to precision &ge; 0.8).</li>
+    <li>Tie the metric to a <strong>decision and its costs</strong>. If a false negative costs 10x a false positive, encode that in the objective rather than reporting a symmetric score.</li>
+  </ul>
+</InterviewProblem>
+<InterviewProblem question="Leadership wants to 'use ML to reduce customer churn.' How do you decide what to actually build, and how would you frame the loss to reflect that a retention offer is cheap but losing a customer is expensive?" difficulty="hard" tag="Applied">
+  <p>First I&apos;d reframe: the goal is not &quot;predict churn,&quot; it&apos;s <strong>maximize retained value net of intervention cost</strong>. Prediction is only useful if there&apos;s an action — a retention offer — that we can target. So the real project is &quot;rank customers by expected value of intervening.&quot;</p>
+  <ul>
+    <li><strong>Define the label and horizon precisely.</strong> Churn within what window (e.g. no purchase in 60 days)? Ambiguous labels make the whole project unmeasurable.</li>
+    <li><strong>Identify the decision.</strong> For each at-risk customer, send an offer or not. That decision, not the probability, is the deliverable.</li>
+    <li><strong>Encode the asymmetry in the objective.</strong> Let <M>{"p"}</M> be predicted churn probability, <M>{"V"}</M> the customer&apos;s lifetime value saved if retained, <M>{"c"}</M> the offer cost, and <M>{"\\varepsilon"}</M> the uplift (how much the offer reduces churn). Expected value of intervening:</li>
+  </ul>
+  <MB>{"\\mathbb{E}[\\text{intervene}] = p \\cdot \\varepsilon \\cdot V - c"}</MB>
+  <p>We act when this is positive, i.e. when <M>{"p \\cdot \\varepsilon \\cdot V > c"}</M>. This pushes the project from a churn classifier toward an <strong>uplift / value-ranking</strong> framing: a confidently-churning customer who would leave anyway has low <M>{"\\varepsilon"}</M> and isn&apos;t worth an offer.</p>
+  <p>For training a probability model, the cost-sensitive analogue is a <strong>weighted log-loss</strong> where the weight reflects the dollar stakes of each error:</p>
+  <MB>{"\\mathcal{L} = -\\frac{1}{n}\\sum_{i} \\Big[ w_1\\, y_i \\log \\hat{p}_i + w_0\\,(1 - y_i)\\log(1 - \\hat{p}_i) \\Big]"}</MB>
+  <p>with <M>{"w_1 \\gg w_0"}</M> because missing a true churner (false negative) forfeits <M>{"V"}</M>, while a false positive only wastes <M>{"c"}</M>. Setting <M>{"w_1/w_0 \\approx V/c"}</M> makes the loss reflect the actual decision economics rather than treating both errors as equal.</p>
+  <p><strong>Define done:</strong> a ranked target list plus an A/B holdout to measure realized retained value minus offer spend — not just AUC, which would let us optimize a metric disconnected from the dollars.</p>
+</InterviewProblem>
+<InterviewProblem question="Write a small framework function that, given an estimated cost matrix, returns the probability threshold at which intervening becomes worthwhile — to make the 'what threshold do we ship?' question concrete." difficulty="medium" tag="Coding">
+  <p>Scoping a problem includes turning &quot;when do we act?&quot; into a number. With per-decision costs, the optimal threshold isn&apos;t 0.5 — it&apos;s wherever the expected cost of acting equals the expected cost of not acting. For a positive prediction we pay <M>{"c_{fp}"}</M> if wrong; for a negative we pay <M>{"c_{fn}"}</M> if wrong. Acting is worth it when <M>{"p\\,c_{fn} \\ge (1-p)\\,c_{fp}"}</M>, giving the break-even threshold below.</p>
+  <CodeBlock language="python" filename="threshold.py">{`def break_even_threshold(c_fp: float, c_fn: float) -> float:
+    """Probability threshold above which acting beats not acting.
+
+    c_fp: cost of a false positive (acted, didn't need to)
+    c_fn: cost of a false negative (didn't act, should have)
+    Derivation: act when p * c_fn >= (1 - p) * c_fp
+                => p >= c_fp / (c_fp + c_fn)
+    """
+    if c_fp < 0 or c_fn < 0 or (c_fp + c_fn) == 0:
+        raise ValueError("costs must be non-negative and not both zero")
+    return c_fp / (c_fp + c_fn)
+
+
+# Churn: missing a churner (c_fn) costs 10x a wasted offer (c_fp)
+t = break_even_threshold(c_fp=1.0, c_fn=10.0)
+print(round(t, 3))   # 0.091 -> intervene even on low-probability churners
+`}</CodeBlock>
+  <p>The teaching point: a default 0.5 threshold silently assumes symmetric costs. When <M>{"c_{fn} = 10\\,c_{fp}"}</M>, the right threshold drops to about <strong>0.091</strong>, so we&apos;d offer retention to anyone above a 9% churn probability. Making this explicit during framing turns a hand-wavy &quot;flag risky customers&quot; into a defensible, cost-aware decision rule.</p>
+</InterviewProblem>
+
+      </>
   );
 }

@@ -6,6 +6,7 @@ import { KeyIdea } from "@/components/content/key-idea";
 import { M, MB } from "@/components/content/math";
 import { CodeBlock } from "@/components/content/code-block";
 import { Quiz } from "@/components/content/quiz";
+import { InterviewProblem } from "@/components/content/interview-problem";
 
 export default function Lesson() {
   return (
@@ -72,6 +73,75 @@ opt.step()                            # apply the optimizer's update rule
         { text: "Adam uses a larger fixed learning rate that never changes per parameter.", why: "Adam's whole point is that the effective step size varies per parameter and over time, not a single fixed rate." },
         { text: "Momentum is only for convex problems, while Adam only works on non-convex ones.", why: "Both are used across convex and non-convex settings; this is not the distinguishing factor." },
       ]} />
-    </>
+    <h2>Interview practice</h2>
+<InterviewProblem question="What problem does momentum solve over vanilla SGD, and how does it work?" difficulty="easy" tag="Conceptual">
+  <p>Vanilla SGD takes a step proportional to the current gradient: <M>{"\\theta_{t+1} = \\theta_t - \\eta\\, g_t"}</M>. In long, narrow ravines the gradient points mostly across the valley walls, so SGD zig-zags &mdash; oscillating along steep directions while crawling along the shallow direction toward the minimum.</p>
+  <p>Momentum accumulates an exponentially-decayed running average of past gradients (a &quot;velocity&quot;) and steps along that:</p>
+  <MB>{"v_t = \\mu\\, v_{t-1} + g_t, \\qquad \\theta_{t+1} = \\theta_t - \\eta\\, v_t"}</MB>
+  <p>The benefit:</p>
+  <ul>
+    <li><strong>Oscillating directions cancel.</strong> Components that flip sign each step average toward zero, damping the zig-zag.</li>
+    <li><strong>Consistent directions accumulate.</strong> The shallow, persistent component adds up, effectively amplifying the learning rate there by roughly <M>{"1/(1-\\mu)"}</M> at steady state.</li>
+  </ul>
+  <p>Typical <M>{"\\mu \\approx 0.9"}</M>, giving about a 10&times; effective speed-up along stable directions. Nesterov momentum refines this by evaluating the gradient at the look-ahead point <M>{"\\theta_t - \\eta\\mu v_{t-1}"}</M>, which corrects overshoot a bit sooner.</p>
+</InterviewProblem>
+<InterviewProblem question="Why does Adam use bias correction, and what goes wrong without it?" difficulty="medium" tag="Math">
+  <p>Adam keeps two EMAs: first moment <M>{"m_t = \\beta_1 m_{t-1} + (1-\\beta_1) g_t"}</M> and second moment <M>{"v_t = \\beta_2 v_{t-1} + (1-\\beta_2) g_t^2"}</M>, both initialized at zero. That zero init biases the estimates toward zero early in training.</p>
+  <p>Unroll the first moment with constant gradient <M>{"g"}</M>:</p>
+  <MB>{"m_t = (1-\\beta_1)\\sum_{i=1}^{t}\\beta_1^{\\,t-i} g = g\\,(1 - \\beta_1^{\\,t})"}</MB>
+  <p>So <M>{"\\mathbb{E}[m_t] = (1-\\beta_1^{\\,t})\\,\\mathbb{E}[g_t]"}</M> &mdash; underestimated by the factor <M>{"(1-\\beta_1^{\\,t})"}</M>. Dividing by it removes the bias:</p>
+  <MB>{"\\hat{m}_t = \\frac{m_t}{1-\\beta_1^{\\,t}}, \\qquad \\hat{v}_t = \\frac{v_t}{1-\\beta_2^{\\,t}}"}</MB>
+  <p><strong>What breaks without it:</strong> with <M>{"\\beta_2 = 0.999"}</M>, at <M>{"t=1"}</M> the raw <M>{"v_1"}</M> is only <M>{"0.001\\,g_1^2"}</M> &mdash; a thousand times too small. The update <M>{"\\hat{m}_t/(\\sqrt{\\hat{v}_t}+\\epsilon)"}</M> would then explode, producing huge, unstable first steps. Bias correction is largest exactly when <M>{"t"}</M> is small and decays to 1, so it only matters during warm-up.</p>
+</InterviewProblem>
+<InterviewProblem question="Adam usually trains faster than SGD, yet many vision papers report SGD+momentum generalizes better. How do you reason about which to pick?" difficulty="hard" tag="Applied">
+  <p>The two optimizers are not interchangeable; they bias the solution differently.</p>
+  <ul>
+    <li><strong>Why Adam is fast:</strong> the per-parameter <M>{"1/\\sqrt{\\hat{v}_t}"}</M> scaling adapts the effective step to each coordinate&apos;s gradient magnitude. This is huge for sparse or wildly-scaled gradients (embeddings, attention, Transformers), so it dominates NLP and large language models.</li>
+    <li><strong>Why SGD can generalize better:</strong> adaptive methods can converge to sharper, lower-margin minima. The uniform, isotropic noise of plain SGD acts as an implicit regularizer that favors flatter minima, which often test better &mdash; a well-documented gap on CIFAR/ImageNet CNNs.</li>
+  </ul>
+  <p>Practical guidance:</p>
+  <ul>
+    <li>For Transformers / NLP / sparse features: start with Adam or AdamW. Use <strong>AdamW</strong>, not Adam + L2, because Adam&apos;s scaling distorts coupled weight decay; decoupled decay restores proper regularization.</li>
+    <li>For CNNs / vision where you can afford tuning: SGD + momentum with a cosine or step LR schedule is a strong, often state-of-the-art baseline.</li>
+    <li>Don&apos;t compare at one learning rate. Adam and SGD have different optimal LRs (Adam often <M>{"\\sim 10^{-3}"}</M>, SGD often <M>{"\\sim 10^{-1}"}</M>). Tune each before declaring a winner.</li>
+    <li>A robust compromise: train with Adam early for speed, then switch to SGD for the tail (SWATS-style), capturing both fast progress and flat-minimum generalization.</li>
+  </ul>
+</InterviewProblem>
+<InterviewProblem question="Implement one Adam update step in NumPy from scratch, given the gradient." difficulty="medium" tag="Coding">
+  <p>The state is the parameter, the two moment buffers, and the step counter. Each call updates the moments, applies bias correction, then takes the scaled step.</p>
+  <CodeBlock language="python" filename="adam_step.py">{`import numpy as np
+
+class Adam:
+    def __init__(self, params, lr=1e-3, betas=(0.9, 0.999), eps=1e-8):
+        self.lr = lr
+        self.b1, self.b2 = betas
+        self.eps = eps
+        self.theta = params.astype(np.float64)
+        self.m = np.zeros_like(self.theta)   # 1st moment EMA
+        self.v = np.zeros_like(self.theta)   # 2nd moment EMA
+        self.t = 0
+
+    def step(self, grad):
+        self.t += 1
+        # update biased moment estimates
+        self.m = self.b1 * self.m + (1 - self.b1) * grad
+        self.v = self.b2 * self.v + (1 - self.b2) * grad**2
+        # bias-correct
+        m_hat = self.m / (1 - self.b1**self.t)
+        v_hat = self.v / (1 - self.b2**self.t)
+        # parameter update
+        self.theta -= self.lr * m_hat / (np.sqrt(v_hat) + self.eps)
+        return self.theta
+
+# sanity check: minimize f(x) = (x - 3)^2, grad = 2(x - 3)
+opt = Adam(np.array([0.0]), lr=0.1)
+for _ in range(500):
+    g = 2 * (opt.theta - 3.0)
+    opt.step(g)
+print(opt.theta)   # -> approx [3.0]`}</CodeBlock>
+  <p>Two things interviewers probe: (1) <strong>where bias correction goes</strong> &mdash; on the read-out <M>{"\\hat{m},\\hat{v}"}</M>, not on the stored buffers; and (2) the <M>{"+\\epsilon"}</M> sits <strong>outside</strong> the square root in standard Adam, guarding against division by zero when a coordinate&apos;s gradients are tiny.</p>
+</InterviewProblem>
+
+      </>
   );
 }

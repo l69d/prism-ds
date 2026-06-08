@@ -6,6 +6,7 @@ import { KeyIdea } from "@/components/content/key-idea";
 import { M, MB } from "@/components/content/math";
 import { CodeBlock } from "@/components/content/code-block";
 import { Quiz } from "@/components/content/quiz";
+import { InterviewProblem } from "@/components/content/interview-problem";
 
 export default function Lesson() {
   return (
@@ -71,6 +72,90 @@ print(X.shape)                      # (3, 8) sparse matrix
         { text: "Stemming removes it before IDF is computed", why: "Stemming changes word forms, not frequency-based weighting; 'the' is handled by stop-words or low IDF, not stemming." },
         { text: "Its term frequency is always exactly one", why: "Common words often have high term frequency; it is the inverse document frequency factor that suppresses them." },
       ]} />
-    </>
+    <h2>Interview practice</h2>
+<InterviewProblem question="What is the difference between stemming and lemmatization, and when would you prefer one over the other?" difficulty="easy" tag="Conceptual">
+  <p><strong>Stemming</strong> chops off affixes using crude heuristics (e.g. Porter), so &quot;studies&quot;, &quot;studying&quot; both collapse to &quot;studi&quot; &mdash; fast, language-agnostic, but produces non-words.</p>
+  <p><strong>Lemmatization</strong> maps a word to its dictionary base form using a vocabulary and morphological analysis, often needing the part-of-speech: &quot;studies&quot; &rarr; &quot;study&quot;, &quot;better&quot; &rarr; &quot;good&quot;. It yields real words but is slower and needs linguistic resources.</p>
+  <ul>
+    <li>Prefer <strong>stemming</strong> for large-scale retrieval/search where speed matters and the tokens never need to be human-readable.</li>
+    <li>Prefer <strong>lemmatization</strong> when downstream tasks care about correctness or interpretability (topic models, features shown to analysts, or where conflating &quot;better&quot;/&quot;good&quot; helps).</li>
+  </ul>
+  <p>A common pitfall: applying either before training a modern subword-tokenized transformer is usually counterproductive, since the model handles morphology itself and you would destroy signal.</p>
+</InterviewProblem>
+<InterviewProblem question="Derive the TF-IDF weight for a term and explain why each factor is shaped the way it is." difficulty="medium" tag="Math">
+  <p>Let <M>{"t"}</M> be a term, <M>{"d"}</M> a document, and <M>{"N"}</M> the number of documents. A standard formulation uses log-scaled term frequency and smoothed inverse document frequency:</p>
+  <MB>{"\\text{tf}(t,d) = 1 + \\log\\big(f_{t,d}\\big), \\qquad \\text{idf}(t) = \\log\\!\\frac{N}{1 + n_t}"}</MB>
+  <p>where <M>{"f_{t,d}"}</M> is the raw count of <M>{"t"}</M> in <M>{"d"}</M> and <M>{"n_t"}</M> is the number of documents containing <M>{"t"}</M>. The weight is the product:</p>
+  <MB>{"w_{t,d} = \\text{tf}(t,d)\\cdot \\text{idf}(t)"}</MB>
+  <p>Reasoning behind the shape:</p>
+  <ul>
+    <li>The <strong>log on tf</strong> reflects diminishing returns &mdash; the 10th occurrence of a word tells you far less than the 1st, so raw counts would over-reward repetition.</li>
+    <li>The <strong>idf</strong> term down-weights words appearing in many documents (a word in every document has <M>{"\\text{idf}\\approx 0"}</M>) and up-weights rare, discriminative words.</li>
+    <li>The <strong>+1 in the denominator</strong> prevents division by zero for unseen terms and smooths very rare terms so they do not get an explosively large weight.</li>
+  </ul>
+  <p>In practice you then L2-normalize each document vector so that long documents do not dominate cosine similarity.</p>
+</InterviewProblem>
+<InterviewProblem question="You are building a sentiment classifier on customer reviews. How would you decide whether to remove stop-words, and what could go wrong if you remove them blindly?" difficulty="medium" tag="Applied">
+  <p>The decision is task-dependent, so I would reason from what the model needs:</p>
+  <ul>
+    <li><strong>Topic/keyword tasks</strong> (search, topic modeling, TF-IDF retrieval): removing stop-words like &quot;the&quot;, &quot;is&quot;, &quot;and&quot; reduces dimensionality and noise with little cost, since they carry almost no topical signal.</li>
+    <li><strong>Sentiment specifically</strong>: many standard stop-word lists contain <strong>negations</strong> like &quot;not&quot;, &quot;no&quot;, &quot;never&quot;. Dropping them turns &quot;not good&quot; into &quot;good&quot; and flips the label &mdash; a classic silent bug.</li>
+  </ul>
+  <p>So my approach:</p>
+  <ul>
+    <li>Start without aggressive stop-word removal and measure validation F1; treat removal as a hyperparameter to test, not a default.</li>
+    <li>If I remove stop-words, use a <strong>custom list that retains negations and intensifiers</strong> (&quot;not&quot;, &quot;very&quot;, &quot;too&quot;).</li>
+    <li>Capture negation context with <strong>bigrams/trigrams</strong> or negation-scope tagging so &quot;not_good&quot; becomes its own feature.</li>
+    <li>For transformer models, skip stop-word removal entirely &mdash; attention already learns which tokens matter, and removal just degrades input.</li>
+  </ul>
+  <p>The broader principle: preprocessing choices must be validated against the metric, not assumed, because what is noise for one task is signal for another.</p>
+</InterviewProblem>
+<InterviewProblem question="Implement a small tokenizer-to-TF-IDF pipeline from scratch (no scikit-learn) and explain the fit/transform split." difficulty="hard" tag="Coding">
+  <p>The key design decision is that <strong>idf and the vocabulary are learned on the training corpus only</strong> (fit), then reused unchanged at transform time so test documents map into the same feature space &mdash; otherwise you leak information and break alignment.</p>
+  <CodeBlock language="python" filename="tfidf.py">{`import math
+import re
+from collections import Counter
+
+def tokenize(text):
+    # lowercase, keep word characters, simple whitespace split
+    return re.findall(r"[a-z0-9]+", text.lower())
+
+class Tfidf:
+    def fit(self, corpus):
+        self.docs_tokens = [tokenize(d) for d in corpus]
+        n = len(self.docs_tokens)
+        # document frequency: how many docs contain each term
+        df = Counter()
+        for toks in self.docs_tokens:
+            for term in set(toks):
+                df[term] += 1
+        self.vocab = {t: i for i, t in enumerate(sorted(df))}
+        # smoothed idf, learned on training data only
+        self.idf = {t: math.log(n / (1 + df[t])) for t in self.vocab}
+        return self
+
+    def transform(self, corpus):
+        rows = []
+        for doc in corpus:
+            toks = tokenize(doc)
+            counts = Counter(toks)
+            vec = [0.0] * len(self.vocab)
+            for term, f in counts.items():
+                if term not in self.vocab:   # ignore OOV terms at test time
+                    continue
+                tf = 1 + math.log(f)
+                vec[self.vocab[term]] = tf * self.idf[term]
+            # L2 normalize so long docs do not dominate
+            norm = math.sqrt(sum(v * v for v in vec)) or 1.0
+            rows.append([v / norm for v in vec])
+        return rows
+
+corpus = ["the cat sat", "the dog ran", "cat and dog"]
+model = Tfidf().fit(corpus)
+print(model.transform(["cat dog dog"]))`}</CodeBlock>
+  <p>Talking points an interviewer wants: (1) <strong>fit learns vocab + idf, transform only applies them</strong>; (2) out-of-vocabulary terms at test time are dropped, not added, to keep dimensions fixed; (3) L2 normalization makes cosine similarity well-behaved; (4) complexity is roughly <M>{"O(\\sum_d |d|)"}</M> over total tokens, and the sparse-matrix version avoids the dense zero-filled vectors shown here.</p>
+</InterviewProblem>
+
+      </>
   );
 }

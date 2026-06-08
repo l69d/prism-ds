@@ -6,6 +6,7 @@ import { KeyIdea } from "@/components/content/key-idea";
 import { M, MB } from "@/components/content/math";
 import { CodeBlock } from "@/components/content/code-block";
 import { Quiz } from "@/components/content/quiz";
+import { InterviewProblem } from "@/components/content/interview-problem";
 
 export default function Lesson() {
   return (
@@ -72,6 +73,84 @@ print(spend)`}</CodeBlock>
         { text: "SUM ignores NULLs, so the total is too low", why: "Skipping NULLs would understate, not overstate, and is not the issue caused by fan-out duplication." },
         { text: "GROUP BY collapsed all NULL keys into one bucket", why: "Null-key bucketing is a real quirk but unrelated to a price total inflated by row duplication." },
       ]} />
-    </>
+    <h2>Interview practice</h2>
+<InterviewProblem question="What is the difference between an inner join and a left join, and what trap does a left join still leave you exposed to?" difficulty="easy" tag="Conceptual">
+  <p>An <strong>inner join</strong> keeps only rows whose key appears in <em>both</em> tables, so any unmatched row on either side silently disappears. A <strong>left join</strong> keeps every row from the left table and fills the right-side columns with NULL when there is no match, so you never lose left rows.</p>
+  <p>The trap: a left join protects you from losing rows, but it does <strong>not</strong> protect you from <em>gaining</em> them. If the right table has duplicate keys (a one-to-many relationship you assumed was one-to-one), each left row fans out into multiple rows. A <M>{"100"}</M>-row customer table left-joined to an orders table can come back with <M>{"10{,}000"}</M> rows.</p>
+  <ul>
+    <li>Always check the <strong>cardinality</strong> of the join key on the right side before joining (is it unique?).</li>
+    <li>After the join, verify row count: a left join should yield <M>{"\\ge"}</M> the left row count, and exactly equal only if the right key is unique.</li>
+    <li>If you wanted at-most-one match but the right side has dupes, dedupe or aggregate the right table to one row per key first.</li>
+  </ul>
+</InterviewProblem>
+<InterviewProblem question="You join a fact table to a dimension table and your aggregate revenue suddenly doubles. Walk through how you would diagnose and fix this." difficulty="medium" tag="Applied">
+  <p>Doubled (or otherwise inflated) measures after a join are the classic symptom of an unintended <strong>many-to-many fan-out</strong>: a key that you treated as unique on the dimension side actually has duplicates, so each fact row is matched multiple times and its revenue is counted more than once.</p>
+  <p>Diagnosis steps:</p>
+  <ul>
+    <li><strong>Count before and after.</strong> Record the fact table row count, then the post-join row count. If it grew, rows were duplicated.</li>
+    <li><strong>Find the offending key.</strong> Group the dimension table by the join key and look for any group with count <M>{"> 1"}</M>. Those are your duplicate keys.</li>
+    <li><strong>Confirm the multiplier.</strong> If the inflation factor is exactly 2x, the duplicated keys typically have two rows each (e.g., a product that appears under two regions or two effective-date versions).</li>
+  </ul>
+  <CodeBlock language="python" filename="diagnose_fanout.py">{`import pandas as pd
+
+# 1. Did the join inflate rows?
+n_before = len(fact)
+joined = fact.merge(dim, on="product_id", how="left")
+print("before:", n_before, "after:", len(joined))  # after > before == fan-out
+
+# 2. Which dimension keys are not unique?
+dupes = dim["product_id"].value_counts()
+print(dupes[dupes > 1])
+
+# 3. Fix A: collapse the dimension to one row per key BEFORE joining
+dim_unique = dim.drop_duplicates(subset="product_id", keep="last")
+clean = fact.merge(dim_unique, on="product_id", how="left", validate="m:1")
+# validate="m:1" raises if the right side is still not unique`}</CodeBlock>
+  <p>The robust fix is to make the dimension exactly one row per key (dedupe, or pick the correct version via an effective-date filter), then re-join. The <strong>validate</strong> argument to <strong>merge</strong> turns &quot;I assume this is many-to-one&quot; into an assertion the code checks for you, so the bug fails loudly instead of silently doubling a KPI.</p>
+</InterviewProblem>
+<InterviewProblem question="In SQL, what is the difference between filtering in WHERE versus HAVING, and why does putting a condition on an aggregate in WHERE fail?" difficulty="medium" tag="Conceptual">
+  <p>The two clauses run at different stages of query execution. The logical order is roughly: <strong>FROM/JOIN</strong>, then <strong>WHERE</strong>, then <strong>GROUP BY</strong>, then <strong>HAVING</strong>, then <strong>SELECT</strong>, then <strong>ORDER BY</strong>.</p>
+  <ul>
+    <li><strong>WHERE</strong> filters individual rows <em>before</em> grouping, so it can only reference raw columns. It cannot see <M>{"\\text{COUNT}(*)"}</M> or <M>{"\\text{SUM}(x)"}</M> because those do not exist yet.</li>
+    <li><strong>HAVING</strong> filters whole groups <em>after</em> aggregation, so it can reference aggregate expressions like <M>{"\\text{COUNT}(*) > 5"}</M>.</li>
+  </ul>
+  <p>Writing <strong>WHERE COUNT(*) &gt; 5</strong> errors because at WHERE time the rows have not been collapsed into groups yet, so the aggregate is undefined. Performance corollary: push every row-level predicate you can into <strong>WHERE</strong> so you aggregate fewer rows, and reserve <strong>HAVING</strong> only for conditions that genuinely depend on the aggregate.</p>
+  <CodeBlock language="python" filename="where_vs_having.sql.py">{`query = """
+SELECT customer_id, COUNT(*) AS n_orders, SUM(amount) AS total
+FROM orders
+WHERE status = 'completed'        -- row-level filter, runs first
+GROUP BY customer_id
+HAVING SUM(amount) > 1000          -- group-level filter, runs after aggregation
+ORDER BY total DESC
+"""`}</CodeBlock>
+</InterviewProblem>
+<InterviewProblem question="You have a transactions table and a flagged_accounts table. Write logic to return all transactions belonging to accounts that are NOT flagged, and explain why an anti-join beats NOT IN here." difficulty="hard" tag="Coding">
+  <p>This is an <strong>anti-join</strong>: keep left rows that have <em>no</em> match on the right. The idiomatic SQL pattern is a LEFT JOIN followed by a NULL check on the right key; in pandas it is a left merge with an indicator.</p>
+  <CodeBlock language="python" filename="anti_join.py">{`import pandas as pd
+
+# pandas anti-join via indicator
+merged = transactions.merge(
+    flagged_accounts[["account_id"]].drop_duplicates(),
+    on="account_id", how="left", indicator=True,
+)
+clean = merged[merged["_merge"] == "left_only"].drop(columns="_merge")
+
+# Equivalent SQL:
+sql = """
+SELECT t.*
+FROM transactions t
+LEFT JOIN flagged_accounts f ON t.account_id = f.account_id
+WHERE f.account_id IS NULL          -- no match found  =>  not flagged
+"""`}</CodeBlock>
+  <p>Why prefer the anti-join over <strong>NOT IN (SELECT account_id FROM flagged_accounts)</strong>:</p>
+  <ul>
+    <li><strong>NULL safety.</strong> If <strong>flagged_accounts.account_id</strong> contains even one NULL, the entire <strong>NOT IN</strong> predicate evaluates to UNKNOWN for every row and returns <em>zero</em> rows. This is a famously silent, data-dependent bug. The LEFT JOIN / IS NULL pattern is immune to it.</li>
+    <li><strong>Performance.</strong> Most optimizers execute <strong>NOT IN</strong> with a NULL-capable subquery less efficiently than a hash anti-join; <strong>NOT EXISTS</strong> or the LEFT JOIN form usually plans better.</li>
+    <li><strong>Fan-out control.</strong> Because we deduplicate the right key first and only test for NULL, the anti-join never multiplies transaction rows even if an account were flagged multiple times.</li>
+  </ul>
+  <p>Note the deduplication of <strong>account_id</strong> on the right: without it, an account flagged twice would still be excluded correctly (it has a match either way), but deduping keeps the merge a clean many-to-one and avoids needless intermediate rows.</p>
+</InterviewProblem>
+
+      </>
   );
 }

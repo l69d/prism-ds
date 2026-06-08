@@ -6,6 +6,7 @@ import { KeyIdea } from "@/components/content/key-idea";
 import { M, MB } from "@/components/content/math";
 import { CodeBlock } from "@/components/content/code-block";
 import { Quiz } from "@/components/content/quiz";
+import { InterviewProblem } from "@/components/content/interview-problem";
 
 export default function Lesson() {
   return (
@@ -66,6 +67,62 @@ print(model.score(X_test, y_test))`}</CodeBlock>
         { text: "Both equally", why: "They differ fundamentally: distance-based models are sensitive to scale while tree splits are invariant to it." },
         { text: "Neither, scaling never matters", why: "Scaling matters a great deal for distance- and gradient-based models even if it does not for trees." },
       ]} />
-    </>
+    <h2>Interview practice</h2>
+
+<InterviewProblem question="Which models are sensitive to feature scaling and which are scale-invariant? Explain why." difficulty="easy" tag="Conceptual">
+  <p>The dividing line is whether the model uses <strong>distances, dot products, or a shared regularization penalty</strong> across features.</p>
+  <ul>
+    <li><strong>Need scaling:</strong> k-NN, k-means, SVM/SVR (RBF and linear), PCA, and any gradient-descent model with L1/L2 regularization (ridge, lasso, logistic regression, neural nets). These compare features on a common geometric or penalty scale, so a feature measured in the thousands will dominate one measured in fractions.</li>
+    <li><strong>Scale-invariant:</strong> decision trees, random forests, and gradient-boosted trees. They split one feature at a time on threshold rules, and any monotonic rescaling of a single feature leaves the set of possible splits unchanged.</li>
+  </ul>
+  <p>For PCA the reason is sharp: PCA maximizes variance, and variance has units. An unscaled feature with large variance (say, income in dollars) will hijack the leading component regardless of its true importance, so you standardize first.</p>
+</InterviewProblem>
+
+<InterviewProblem question="Why does standardizing features speed up gradient descent? Give the geometric intuition." difficulty="medium" tag="Math">
+  <p>Consider squared-error loss <M>{"L(w) = \\tfrac{1}{2}\\,\\|Xw - y\\|^2"}</M>. The curvature is set by the Hessian <M>{"H = X^\\top X"}</M>, and gradient descent converges at a rate governed by its condition number <M>{"\\kappa = \\lambda_{\\max}/\\lambda_{\\min}"}</M>.</p>
+  <p>If features have wildly different scales, the columns of <M>{"X"}</M> have very different norms, the eigenvalues of <M>{"X^\\top X"}</M> spread out, and <M>{"\\kappa"}</M> blows up. The loss surface becomes a long narrow valley: a single learning rate is too big along the steep axis and too small along the flat one, so the path zig-zags.</p>
+  <MB>{"\\text{error after } k \\text{ steps} \\;\\propto\\; \\left(\\frac{\\kappa - 1}{\\kappa + 1}\\right)^{k}"}</MB>
+  <p>Standardizing to zero mean and unit variance equalizes the column norms, pulls the eigenvalues together, shrinks <M>{"\\kappa"}</M> toward 1, and turns the valley into a bowl, so far fewer steps are needed.</p>
+</InterviewProblem>
+
+<InterviewProblem question="You have a feature with heavy outliers and a long right tail. How would you scale it, and why not just standardize?" difficulty="medium" tag="Applied">
+  <p>Standardization uses the mean and standard deviation, both of which are dragged by outliers. A few extreme points inflate <M>{"\\sigma"}</M>, which compresses the bulk of the data into a tiny range near zero, so the scaling does not actually equalize what most rows look like.</p>
+  <p>Better options, roughly in order:</p>
+  <ul>
+    <li><strong>RobustScaler</strong> centers on the median and divides by the IQR (<M>{"Q_3 - Q_1"}</M>), both of which ignore the tails. The middle 50% of the data ends up on a sensible scale and outliers stay outliers instead of distorting everyone else.</li>
+    <li><strong>Transform first, then scale.</strong> For a positive long-tailed feature, apply <M>{"\\log(1+x)"}</M> or a Box-Cox / Yeo-Johnson power transform to pull in the tail and make the distribution roughly symmetric, then standardize.</li>
+  </ul>
+  <p>Whatever you pick, <strong>fit the scaler on the training split only</strong> and apply the stored statistics to validation and test, otherwise test information leaks into the median, IQR, or transform parameters.</p>
+</InterviewProblem>
+
+<InterviewProblem question="Write scikit-learn code that scales features correctly inside cross-validation, avoiding leakage. Explain the bug in the naive version." difficulty="hard" tag="Coding">
+  <p>The classic mistake is to scale the whole dataset once, before splitting. Then the scaler&apos;s mean and standard deviation are computed using rows that later land in the validation folds, so every fold has peeked at its own statistics. Cross-validation scores come out optimistically biased.</p>
+  <p>The fix is to wrap the scaler and the estimator in a <strong>Pipeline</strong>, so the scaler is re-fit on each training fold only and the same transform is applied to the held-out fold:</p>
+  <CodeBlock language="python" filename="scale_cv.py">{`import numpy as np
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import StandardScaler
+from sklearn.linear_model import LogisticRegression
+from sklearn.model_selection import cross_val_score
+
+# WRONG: scaler sees the whole dataset, leaking val stats into training
+# X_scaled = StandardScaler().fit_transform(X)
+# scores = cross_val_score(LogisticRegression(), X_scaled, y, cv=5)
+
+# RIGHT: scaler is re-fit inside each training fold
+pipe = Pipeline([
+    ("scaler", StandardScaler()),
+    ("clf", LogisticRegression(max_iter=1000)),
+])
+
+scores = cross_val_score(pipe, X, y, cv=5, scoring="roc_auc")
+print(f"AUC: {scores.mean():.3f} +/- {scores.std():.3f}")
+
+# The fitted statistics live in the pipeline and are reused at predict time
+pipe.fit(X, y)
+print("means:", np.round(pipe.named_steps["scaler"].mean_, 2))`}</CodeBlock>
+  <p>The same rule applies to any preprocessing that learns parameters from data (imputation, target encoding, PCA): it belongs <strong>inside</strong> the pipeline so it is fit on training data only and re-fit per fold.</p>
+</InterviewProblem>
+
+      </>
   );
 }

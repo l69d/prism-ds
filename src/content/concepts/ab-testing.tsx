@@ -7,6 +7,7 @@ import { M, MB } from "@/components/content/math";
 import { CodeBlock } from "@/components/content/code-block";
 import { Quiz } from "@/components/content/quiz";
 import { ABTestSimulator } from "@/components/viz/ab-test-simulator";
+import { InterviewProblem } from "@/components/content/interview-problem";
 
 export default function Lesson() {
   return (
@@ -130,6 +131,71 @@ print(f"need ~{n_per_arm:,.0f} users per arm")`}</CodeBlock>
           { text: "Add more variants to be sure.", why: "More comparisons make false positives more likely, not less." },
         ]}
       />
-    </>
+    <h2>Interview practice</h2>
+
+<InterviewProblem question="What is statistical power in an A/B test, and name three levers that increase it." difficulty="easy" tag="Conceptual">
+  <p>Power is the probability of detecting a true effect when one really exists, i.e. <M>{"1 - \\beta"}</M> where <M>{"\\beta"}</M> is the Type II error rate. A test with 80% power will correctly reject the null in 80% of worlds where the alternative is true.</p>
+  <p>The four quantities are locked together: significance level <M>{"\\alpha"}</M>, power <M>{"1-\\beta"}</M>, effect size, and sample size. Fix any three and the fourth is determined. Levers that raise power:</p>
+  <ul>
+    <li><strong>More samples per arm.</strong> Standard error shrinks like <M>{"1/\\sqrt{n}"}</M>, so the sampling distributions of the two arms overlap less.</li>
+    <li><strong>A larger true effect size.</strong> You cannot control this, but designing the change to be bold rather than marginal makes it detectable.</li>
+    <li><strong>Lower outcome variance.</strong> Use a less noisy metric, trim outliers, or apply variance reduction such as CUPED (regressing out a pre-experiment covariate).</li>
+  </ul>
+  <p>Loosening <M>{"\\alpha"}</M> also raises power, but it trades away false-positive control, so it is rarely the right lever.</p>
+</InterviewProblem>
+
+<InterviewProblem question="A PM ran an experiment, saw p = 0.08 on day 3, kept it running, and stopped the moment p dropped below 0.05. What is wrong, and how would you fix the design?" difficulty="medium" tag="Applied">
+  <p>This is <strong>peeking</strong> (optional stopping), and it inflates the false-positive rate far above the nominal 5%. The p-value wanders randomly over time even under the null; if you check repeatedly and stop the first time it dips under 0.05, you are sampling the minimum of many correlated draws. With enough peeks the true Type I error can exceed 30%.</p>
+  <p>The fix depends on what you want:</p>
+  <ul>
+    <li><strong>Fixed-horizon test.</strong> Decide the sample size up front via a power calculation, run until you hit it, and look exactly once. No early stopping on significance.</li>
+    <li><strong>Sequential testing.</strong> If you genuinely need to monitor continuously, use a method built for it: alpha-spending boundaries (O&apos;Brien-Fleming, Pocock) or always-valid inference such as mixture sequential probability ratio tests / confidence sequences. These spread the <M>{"\\alpha"}</M> budget across looks so the overall error stays at 5%.</li>
+  </ul>
+  <p>The key teaching point: with a fixed-horizon design the p-value is only valid at the pre-committed sample size. Stopping early because the number looked good is not a valid decision rule.</p>
+</InterviewProblem>
+
+<InterviewProblem question="Estimate the sample size needed to detect a lift from a 5% to a 5.5% conversion rate at alpha = 0.05 (two-sided) and 80% power." difficulty="hard" tag="Math">
+  <p>For comparing two proportions, the per-arm sample size for a two-sided test is approximately</p>
+  <MB>{"n \\approx \\frac{(z_{1-\\alpha/2} + z_{1-\\beta})^2 \\, \\big(p_1(1-p_1) + p_2(1-p_2)\\big)}{(p_2 - p_1)^2}"}</MB>
+  <p>Plug in the design values. The z-quantiles are <M>{"z_{0.975} = 1.96"}</M> and <M>{"z_{0.80} = 0.84"}</M>, so</p>
+  <MB>{"(1.96 + 0.84)^2 = 2.8^2 = 7.84"}</MB>
+  <p>The baseline and target rates give the variance term</p>
+  <MB>{"p_1(1-p_1) + p_2(1-p_2) = 0.05(0.95) + 0.055(0.945) = 0.0475 + 0.0520 = 0.0995"}</MB>
+  <p>and the absolute effect is <M>{"\\Delta = 0.055 - 0.05 = 0.005"}</M>, so <M>{"\\Delta^2 = 2.5\\times 10^{-5}"}</M>. Therefore</p>
+  <MB>{"n \\approx \\frac{7.84 \\times 0.0995}{2.5\\times 10^{-5}} = \\frac{0.780}{2.5\\times 10^{-5}} \\approx 31{,}200"}</MB>
+  <p>So roughly <strong>31k users per arm</strong>, about 62k total. The takeaway interviewers want: detecting a small relative lift on a low base rate is expensive, because <M>{"n"}</M> scales like <M>{"1/\\Delta^2"}</M> — halving the minimum detectable effect quadruples the cost.</p>
+</InterviewProblem>
+
+<InterviewProblem question="Write a function that runs a two-proportion z-test and returns the p-value and a 95% confidence interval for the difference in conversion rates." difficulty="medium" tag="Coding">
+  <p>The pooled-proportion z-test is standard for testing the null of equal rates; the CI for the difference uses the unpooled (separate) standard error, which is the conventional pairing.</p>
+  <CodeBlock language="python" filename="two_prop_test.py">{`from math import sqrt
+from statistics import NormalDist
+
+def two_prop_ztest(success_a, n_a, success_b, n_b, alpha=0.05):
+    p_a = success_a / n_a
+    p_b = success_b / n_b
+    diff = p_b - p_a
+
+    # Pooled SE for the hypothesis test (null: p_a == p_b)
+    p_pool = (success_a + success_b) / (n_a + n_b)
+    se_pool = sqrt(p_pool * (1 - p_pool) * (1 / n_a + 1 / n_b))
+    z = diff / se_pool
+
+    nd = NormalDist()
+    p_value = 2 * (1 - nd.cdf(abs(z)))  # two-sided
+
+    # Unpooled SE for the confidence interval of the difference
+    se_diff = sqrt(p_a * (1 - p_a) / n_a + p_b * (1 - p_b) / n_b)
+    z_crit = nd.inv_cdf(1 - alpha / 2)
+    ci = (diff - z_crit * se_diff, diff + z_crit * se_diff)
+
+    return {"diff": diff, "z": z, "p_value": p_value, "ci": ci}
+
+# Example: control 500/10000, treatment 560/10000
+print(two_prop_ztest(500, 10000, 560, 10000))`}</CodeBlock>
+  <p>Watch-outs an interviewer probes: the normal approximation needs enough successes and failures per arm (a common rule is at least 5-10 of each); for very small counts use Fisher&apos;s exact test instead. Also note the CI here is for the <strong>absolute</strong> difference — stakeholders usually care about <strong>relative</strong> lift, which needs a separate (often delta-method or bootstrap) interval.</p>
+</InterviewProblem>
+
+      </>
   );
 }

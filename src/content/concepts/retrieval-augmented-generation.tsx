@@ -6,6 +6,7 @@ import { KeyIdea } from "@/components/content/key-idea";
 import { M, MB } from "@/components/content/math";
 import { CodeBlock } from "@/components/content/code-block";
 import { Quiz } from "@/components/content/quiz";
+import { InterviewProblem } from "@/components/content/interview-problem";
 
 export default function Lesson() {
   return (
@@ -97,6 +98,69 @@ answer = llm(prompt)`}</CodeBlock>
         { text: "It makes the model's temperature zero, forcing deterministic output.", why: "Determinism is unrelated to factual grounding; a confident wrong answer can still be deterministic." },
         { text: "It increases the model's context window automatically.", why: "RAG works within the existing window; it selects what to put there, it does not enlarge it." },
       ]} />
-    </>
+    <h2>Interview practice</h2>
+<InterviewProblem question="What problem does RAG solve that fine-tuning does not, and when would you still prefer fine-tuning?" difficulty="easy" tag="Conceptual">
+  <p>RAG attaches an external, queryable knowledge source to a frozen LLM at inference time. It directly attacks three weaknesses of a static model:</p>
+  <ul>
+    <li><strong>Staleness:</strong> the model&apos;s parametric knowledge is frozen at its training cutoff. RAG injects fresh documents into the prompt, so updating knowledge is just re-indexing, no retraining.</li>
+    <li><strong>Hallucination &amp; attribution:</strong> retrieved passages give the model grounded evidence and let you cite sources, so answers are checkable.</li>
+    <li><strong>Private / long-tail data:</strong> facts that never appeared in pretraining (your internal wiki, a specific contract) can be surfaced on demand.</li>
+  </ul>
+  <p>Fine-tuning instead changes the weights, so it is the better tool when you need to teach <strong>behavior or form</strong> rather than facts: a house writing style, a strict output schema, a domain-specific reasoning skill, or to compress a frequently-used skill so you stop paying for long retrieved context. The two are complementary &mdash; a common production pattern is fine-tune for format and tone, RAG for the actual facts.</p>
+</InterviewProblem>
+<InterviewProblem question="Walk through the full RAG pipeline end to end, and name a failure mode at each stage." difficulty="medium" tag="Applied">
+  <p>The pipeline splits into an offline indexing phase and an online query phase.</p>
+  <ul>
+    <li><strong>Chunk:</strong> split documents into passages. Failure: chunks too large dilute the embedding and waste context; too small lose the surrounding meaning. Mitigate with overlap and structure-aware splitting.</li>
+    <li><strong>Embed:</strong> map each chunk to a vector with an embedding model. Failure: a domain mismatch (general-purpose embedder on legal or code text) puts relevant chunks far apart in vector space.</li>
+    <li><strong>Index:</strong> store vectors in a vector store with an ANN index (HNSW, IVF). Failure: aggressive ANN parameters trade recall for speed, so the true nearest neighbor is silently missed.</li>
+    <li><strong>Retrieve:</strong> embed the query and fetch top-<M>{"k"}</M>. Failure: the query and the document are phrased differently (vocabulary mismatch); a pure-vector search can miss exact keyword matches that a hybrid (BM25 + dense) search would catch.</li>
+    <li><strong>Rerank (optional):</strong> a cross-encoder rescores candidates. Failure: skipping it leaves loosely relevant chunks ahead of the truly relevant one.</li>
+    <li><strong>Generate:</strong> stuff the retrieved context into the prompt and answer. Failure: the model ignores the context and falls back on parametric memory, or the gold passage sits in the middle of a long context and gets lost.</li>
+  </ul>
+  <p>A useful interview point: most RAG quality problems are <strong>retrieval</strong> problems, not generation problems. If the right chunk never reaches the prompt, no amount of prompt engineering recovers it.</p>
+</InterviewProblem>
+<InterviewProblem question="Your RAG bot gives confident but wrong answers. How do you diagnose whether the failure is in retrieval or in generation, and how do you measure it?" difficulty="hard" tag="Case">
+  <p>First, <strong>decompose the system</strong> so retrieval and generation can be scored independently.</p>
+  <p><strong>Is retrieval the problem?</strong> Build a small eval set of questions paired with the ground-truth supporting chunk(s). Then measure whether retrieval surfaces them:</p>
+  <ul>
+    <li><strong>Recall@k</strong> &mdash; fraction of questions where at least one gold chunk appears in the top <M>{"k"}</M>. Low recall means the answer is impossible regardless of the LLM.</li>
+    <li><strong>MRR / nDCG</strong> &mdash; reward placing the gold chunk near the top, which matters because models attend more to the start of context.</li>
+  </ul>
+  <p><strong>Is generation the problem?</strong> Condition on the correct context and check the answer against it:</p>
+  <ul>
+    <li><strong>Faithfulness / groundedness</strong> &mdash; is every claim supported by the retrieved text? Measure with an LLM-as-judge or NLI entailment of each answer sentence against the context.</li>
+    <li><strong>Answer relevance</strong> &mdash; does the answer actually address the question.</li>
+  </ul>
+  <p>The diagnosis is the cross-tabulation: if Recall@k is high but faithfulness is low, the model is hallucinating despite having the evidence &mdash; fix the prompt, force citations, or use a stronger model. If Recall@k is low, no generation fix helps &mdash; improve chunking, swap the embedder, add hybrid search or a reranker. Always carry a <strong>retrieval-off baseline</strong> (closed-book answers) so you can prove RAG is adding value at all.</p>
+</InterviewProblem>
+<InterviewProblem question="Implement cosine-similarity retrieval over a set of chunk embeddings and explain why cosine rather than raw dot product." difficulty="medium" tag="Coding">
+  <p>Cosine similarity is the dot product after L2-normalizing both vectors:</p>
+  <MB>{"\\text{cos}(q, d) = \\frac{q \\cdot d}{\\lVert q \\rVert \\, \\lVert d \\rVert}"}</MB>
+  <p>Dividing by the norms removes magnitude, so two passages that talk about the same topic score high even if one is longer (and thus has a larger raw vector). Many embedding models are trained with a cosine objective, so it matches their geometry. Note that once vectors are normalized, ranking by cosine, by dot product, and by (descending) Euclidean distance are all equivalent &mdash; which is why production indexes often normalize once at insert time and then use a fast inner-product index.</p>
+  <CodeBlock language="python" filename="retrieve.py">{`import numpy as np
+
+def normalize(x: np.ndarray) -> np.ndarray:
+    # row-wise L2 normalize; add eps to avoid div-by-zero
+    norms = np.linalg.norm(x, axis=-1, keepdims=True)
+    return x / np.clip(norms, 1e-12, None)
+
+def top_k(query_vec, chunk_mat, chunks, k=3):
+    q = normalize(query_vec.reshape(1, -1))      # (1, d)
+    D = normalize(chunk_mat)                       # (n, d)
+    scores = (D @ q.T).ravel()                     # cosine, since both normalized
+    idx = np.argsort(-scores)[:k]                  # highest first
+    return [(chunks[i], float(scores[i])) for i in idx]
+
+# toy example
+chunks = ["refund policy is 30 days", "office hours are 9 to 5", "returns accepted within a month"]
+chunk_mat = np.random.randn(len(chunks), 384)     # stand-in for real embeddings
+query_vec = np.random.randn(384)
+for text, s in top_k(query_vec, chunk_mat, chunks, k=2):
+    print(f"{s:.3f}  {text}")`}</CodeBlock>
+  <p>For real corpora you would not loop in NumPy &mdash; you would hand these normalized vectors to an ANN index (FAISS, HNSW) so retrieval stays sublinear as the corpus grows.</p>
+</InterviewProblem>
+
+      </>
   );
 }

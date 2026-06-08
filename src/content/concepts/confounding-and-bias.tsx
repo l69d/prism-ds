@@ -6,6 +6,7 @@ import { KeyIdea } from "@/components/content/key-idea";
 import { M, MB } from "@/components/content/math";
 import { CodeBlock } from "@/components/content/code-block";
 import { Quiz } from "@/components/content/quiz";
+import { InterviewProblem } from "@/components/content/interview-problem";
 
 export default function Lesson() {
   return (
@@ -100,6 +101,57 @@ print("among famous:", np.corrcoef(talent[famous], looks[famous])[0, 1])
           { text: "Smoking is a confounder that was not controlled for", why: "A confounder is a common cause of both variables; here the issue is a common effect (a collider), the opposite structure." },
         ]}
       />
-    </>
+    <h2>Interview practice</h2>
+<InterviewProblem question="What is the difference between a confounder and a collider, and why must you control for one but not the other?" difficulty="easy" tag="Conceptual">
+  <p>Both relate the treatment <M>{"X"}</M> and outcome <M>{"Y"}</M> to a third variable <M>{"Z"}</M>, but the arrows point in opposite ways.</p>
+  <ul>
+    <li><strong>Confounder:</strong> a common cause, <M>{"X \\leftarrow Z \\rightarrow Y"}</M>. It opens a non-causal &quot;back-door&quot; path that flows into your estimate of the <M>{"X \\to Y"}</M> effect. You <strong>must</strong> adjust for it (condition, stratify, or match) to close that path.</li>
+    <li><strong>Collider:</strong> a common effect, <M>{"X \\rightarrow Z \\leftarrow Y"}</M>. The path through <M>{"Z"}</M> is naturally <strong>blocked</strong>. Conditioning on <M>{"Z"}</M> (or a descendant of it) <strong>opens</strong> it, inducing a spurious association between <M>{"X"}</M> and <M>{"Y"}</M> even when none exists.</li>
+  </ul>
+  <p>So the rule is the reverse of intuition: adjusting for &quot;more variables&quot; is not always safer. Controlling for a confounder removes bias; controlling for a collider creates it. The fix is to draw the causal DAG first and adjust only for the set that blocks all back-door paths without conditioning on colliders or their descendants.</p>
+</InterviewProblem>
+<InterviewProblem question="A health study finds that among hospitalized patients, smokers have LOWER rates of a certain disease than non-smokers, even though smoking causes the disease in the general population. Explain what is happening." difficulty="medium" tag="Case">
+  <p>This is <strong>collider (selection) bias</strong>, the classic Berkson&apos;s paradox. Hospitalization is a common effect of both smoking and the disease: being a smoker raises your chance of being hospitalized (for other reasons), and having the disease also raises it. So the DAG is <M>{"\\text{Smoking} \\rightarrow \\text{Hospitalized} \\leftarrow \\text{Disease}"}</M>.</p>
+  <p>By studying only hospitalized patients, you have <strong>conditioned on the collider</strong>. Among the hospitalized, if a non-smoker is in the hospital, they are more likely to be there <em>because of</em> the disease (they lacked the smoking pathway). A smoker could have been admitted for a smoking-related reason instead, so given admission, smokers need the disease &quot;less&quot; to explain their presence. This manufactures a negative within-sample association that reverses the true positive causal effect.</p>
+  <p>The lesson: a non-random sampling filter that depends on both the exposure and the outcome will distort, and can even flip, the observed relationship. The remedy is to sample from the general population, or to model and reweight the selection process rather than analyze the filtered cohort as if it were representative.</p>
+</InterviewProblem>
+<InterviewProblem question="In a linear model Y = a*X + b*Z + noise where Z is a confounder, derive the omitted-variable bias when you regress Y on X alone, and state its sign." difficulty="hard" tag="Math">
+  <p>Suppose the true data-generating process is</p>
+  <MB>{"Y = \\alpha X + \\beta Z + \\varepsilon, \\qquad \\mathbb{E}[\\varepsilon \\mid X, Z] = 0"}</MB>
+  <p>but you fit the short regression of <M>{"Y"}</M> on <M>{"X"}</M> only. The OLS slope you estimate converges to</p>
+  <MB>{"\\hat{\\alpha}_{\\text{short}} \;\\xrightarrow{p}\; \\frac{\\operatorname{Cov}(X, Y)}{\\operatorname{Var}(X)}"}</MB>
+  <p>Substitute the true model into the covariance:</p>
+  <MB>{"\\operatorname{Cov}(X, Y) = \\alpha\\operatorname{Var}(X) + \\beta\\operatorname{Cov}(X, Z) + \\operatorname{Cov}(X,\\varepsilon)"}</MB>
+  <p>The last term is zero by exogeneity. Dividing through by <M>{"\\operatorname{Var}(X)"}</M>:</p>
+  <MB>{"\\hat{\\alpha}_{\\text{short}} \;\\xrightarrow{p}\; \\alpha + \\beta\\,\\frac{\\operatorname{Cov}(X, Z)}{\\operatorname{Var}(X)} = \\alpha + \\beta\\,\\delta"}</MB>
+  <p>where <M>{"\\delta"}</M> is the slope of regressing the omitted <M>{"Z"}</M> on <M>{"X"}</M>. The bias is the product <M>{"\\beta\\,\\delta"}</M>: it depends on <strong>how strongly</strong> <M>{"Z"}</M> affects <M>{"Y"}</M> (<M>{"\\beta"}</M>) and <strong>how correlated</strong> <M>{"Z"}</M> is with <M>{"X"}</M> (<M>{"\\delta"}</M>). The sign of the bias is the sign of <M>{"\\beta\\,\\delta"}</M>: same-sign <M>{"\\beta,\\delta"}</M> inflate the estimate, opposite signs deflate it. If either <M>{"\\beta = 0"}</M> (Z does not affect Y) or <M>{"\\delta = 0"}</M> (Z uncorrelated with X), the bias vanishes, which is exactly why a true confounder must satisfy both arrows.</p>
+</InterviewProblem>
+<InterviewProblem question="You suspect a feature in your dataset is a collider. Write code to demonstrate how conditioning on it induces a spurious correlation between two independent variables." difficulty="medium" tag="Coding">
+  <p>Generate two genuinely independent causes, build a collider as their (noisy) sum, then compare the raw correlation against the correlation within a slice of the collider.</p>
+  <CodeBlock language="python" filename="collider_demo.py">{`import numpy as np
+
+rng = np.random.default_rng(0)
+n = 100_000
+
+# X and Y are independent by construction
+x = rng.normal(size=n)
+y = rng.normal(size=n)
+
+# C is a collider: a common effect of both X and Y
+c = x + y + rng.normal(scale=0.1, size=n)
+
+# 1) Unconditional correlation: should be ~0
+raw = np.corrcoef(x, y)[0, 1]
+print(f"corr(X, Y) overall: {raw:.3f}")
+
+# 2) Condition on the collider by slicing to a narrow band of C
+mask = np.abs(c) < 0.1          # roughly "C is held fixed"
+cond = np.corrcoef(x[mask], y[mask])[0, 1]
+print(f"corr(X, Y) | C fixed: {cond:.3f}")
+`}</CodeBlock>
+  <p>The overall correlation is essentially zero, but inside the slice it is strongly <strong>negative</strong>: once their sum is pinned near a constant, a larger <M>{"X"}</M> forces a smaller <M>{"Y"}</M>. This is the bias mechanism in miniature. The practical takeaway for ML is that adding a downstream feature (one caused by both your target and a predictor) to a model, or filtering rows on such a variable, can fabricate relationships and wreck out-of-sample generalization and any causal interpretation of the coefficients.</p>
+</InterviewProblem>
+
+      </>
   );
 }

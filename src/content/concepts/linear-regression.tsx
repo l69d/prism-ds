@@ -7,6 +7,7 @@ import { M, MB } from "@/components/content/math";
 import { CodeBlock } from "@/components/content/code-block";
 import { Quiz } from "@/components/content/quiz";
 import { RegressionGradientDescent } from "@/components/viz/regression-gd";
+import { InterviewProblem } from "@/components/content/interview-problem";
 
 export default function LinearRegressionContent() {
   return (
@@ -87,6 +88,73 @@ print("RMSE:", mean_squared_error(y_test, pred) ** 0.5)`}</CodeBlock>
           { text: "To guarantee R² = 1.", why: "R² depends on the data, not the choice of loss form." },
         ]}
       />
-    </>
+    <h2>Interview practice</h2>
+<InterviewProblem question="Explain the linear regression model, its loss function, and what 'fitting' actually computes." difficulty="easy" tag="Conceptual">
+  <p>The model assumes the target is a linear combination of the features plus noise:</p>
+  <MB>{"y_i = \\beta_0 + \\beta_1 x_{i1} + \\dots + \\beta_p x_{ip} + \\varepsilon_i"}</MB>
+  <p>The loss is the <strong>residual sum of squares</strong> &mdash; the sum of squared vertical gaps between each point and the line:</p>
+  <MB>{"\\mathrm{RSS}(\\beta) = \\sum_{i=1}^{n} \\bigl(y_i - \\hat{y}_i\\bigr)^2"}</MB>
+  <p>&quot;Fitting&quot; means choosing the coefficients <M>{"\\beta"}</M> that minimize this loss. Because RSS is a smooth convex function of <M>{"\\beta"}</M>, there is a single global minimum, and it has a closed-form solution. Two clarifying points interviewers like to hear:</p>
+  <ul>
+    <li>We square the <strong>vertical</strong> errors, not perpendicular distance &mdash; we are predicting <M>{"y"}</M> from <M>{"x"}</M>, so only the <M>{"y"}</M>-direction error counts.</li>
+    <li>Squaring (vs. absolute error) makes the loss differentiable everywhere and yields the closed form, but it also makes the fit sensitive to outliers, since a large residual is penalized quadratically.</li>
+  </ul>
+</InterviewProblem>
+<InterviewProblem question="Derive the ordinary least squares solution in matrix form. When is it not unique?" difficulty="hard" tag="Math">
+  <p>Stack the data into a design matrix <M>{"X \\in \\mathbb{R}^{n \\times (p+1)}"}</M> (a leading column of ones for the intercept) and target vector <M>{"y"}</M>. The loss is:</p>
+  <MB>{"\\mathrm{RSS}(\\beta) = \\lVert y - X\\beta \\rVert_2^2 = (y - X\\beta)^\\top (y - X\\beta)"}</MB>
+  <p>Expand and take the gradient with respect to <M>{"\\beta"}</M>:</p>
+  <MB>{"\\nabla_\\beta \\mathrm{RSS} = -2 X^\\top (y - X\\beta)"}</MB>
+  <p>Set it to zero, giving the <strong>normal equations</strong>:</p>
+  <MB>{"X^\\top X \\, \\hat{\\beta} = X^\\top y \\quad\\Longrightarrow\\quad \\hat{\\beta} = (X^\\top X)^{-1} X^\\top y"}</MB>
+  <p>The solution is unique only when <M>{"X^\\top X"}</M> is invertible, i.e. when <M>{"X"}</M> has full column rank. It breaks when:</p>
+  <ul>
+    <li>Features are <strong>perfectly collinear</strong> (one column is a linear combination of others) &mdash; e.g. dummy-encoding all categories plus an intercept (the dummy-variable trap).</li>
+    <li>There are <strong>more features than observations</strong> (<M>{"p > n"}</M>), so the columns cannot be independent.</li>
+  </ul>
+  <p>In those cases use the pseudo-inverse (minimum-norm solution) or add regularization like ridge, which replaces <M>{"X^\\top X"}</M> with <M>{"X^\\top X + \\lambda I"}</M> and is always invertible for <M>{"\\lambda > 0"}</M>.</p>
+</InterviewProblem>
+<InterviewProblem question="A coefficient came out as -3.2 with R-squared of 0.78. How do you interpret these, and what does NOT R-squared tell you?" difficulty="medium" tag="Conceptual">
+  <p><strong>The coefficient:</strong> holding all other features fixed, a one-unit increase in that feature is associated with a <M>{"3.2"}</M>-unit <strong>decrease</strong> in the predicted target, in the original units of <M>{"y"}</M>. &quot;Holding others fixed&quot; is essential &mdash; the magnitude depends on the feature&apos;s scale, so to compare importance across features you should standardize them first or compare standardized coefficients.</p>
+  <p><strong>R-squared = 0.78:</strong> the model explains 78% of the variance in <M>{"y"}</M> relative to a baseline that always predicts the mean:</p>
+  <MB>{"R^2 = 1 - \\frac{\\sum_i (y_i - \\hat{y}_i)^2}{\\sum_i (y_i - \\bar{y})^2}"}</MB>
+  <p>What R-squared does <strong>not</strong> tell you:</p>
+  <ul>
+    <li>Whether the relationship is causal &mdash; it is purely associational.</li>
+    <li>Whether the fit is appropriate; a curved relationship can still have high <M>{"R^2"}</M> while residual plots reveal clear structure.</li>
+    <li>Out-of-sample performance &mdash; <M>{"R^2"}</M> never decreases when you add features, so it rewards overfitting. Use adjusted <M>{"R^2"}</M> or a held-out test set instead.</li>
+    <li>Whether coefficients are statistically distinguishable from zero &mdash; that needs standard errors and p-values.</li>
+  </ul>
+</InterviewProblem>
+<InterviewProblem question="Your linear model fits training data well, but residuals fan out as fitted values grow and a few points dominate the fit. What's going on and how do you fix it?" difficulty="medium" tag="Applied">
+  <p>The fanning pattern is <strong>heteroscedasticity</strong> &mdash; error variance is not constant. The few dominant points are <strong>high-leverage outliers</strong>. Both violate OLS assumptions and have concrete consequences:</p>
+  <ul>
+    <li>Heteroscedasticity does not bias the coefficient estimates, but it makes the usual <strong>standard errors wrong</strong>, so confidence intervals and p-values are untrustworthy.</li>
+    <li>Squared loss lets a single high-leverage outlier pull the entire line toward it.</li>
+  </ul>
+  <p>Diagnosis and fixes:</p>
+  <ul>
+    <li>Plot residuals vs. fitted values (look for the funnel) and use a Q-Q plot to check normality of residuals.</li>
+    <li>For heteroscedasticity: transform the target (e.g. <M>{"\\log y"}</M> when variance grows with the mean), use weighted least squares, or report heteroscedasticity-robust (Huber-White) standard errors.</li>
+    <li>For outliers and leverage: inspect Cook&apos;s distance, and consider a robust regression (Huber or quantile loss) that downweights extreme residuals instead of squaring them.</li>
+  </ul>
+  <CodeBlock language="python" filename="diagnose.py">{`import numpy as np
+import statsmodels.api as sm
+
+X = sm.add_constant(X_features)          # add intercept column
+ols = sm.OLS(y, X).fit()
+
+# Heteroscedasticity-robust (Huber-White) standard errors
+robust = ols.get_robustcov_results(cov_type="HC3")
+print(robust.summary())
+
+# Leverage and influence: large Cook's distance flags problem points
+influence = ols.get_influence()
+cooks_d = influence.cooks_distance[0]
+flagged = np.where(cooks_d > 4 / len(y))[0]   # common rule of thumb
+print("High-influence rows:", flagged)`}</CodeBlock>
+</InterviewProblem>
+
+      </>
   );
 }

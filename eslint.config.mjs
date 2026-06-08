@@ -7,6 +7,8 @@ const eslintConfig = defineConfig([
   ...nextTs,
   {
     rules: {
+      // Apostrophes in prose are valid HTML and render fine; this stylistic rule is noisy.
+      "react/no-unescaped-entities": "off",
       // Reading localStorage / DOM on mount and syncing to state is the correct,
       // hydration-safe pattern here; the rule over-fires on it. Keep as a warning.
       "react-hooks/set-state-in-effect": "warn",

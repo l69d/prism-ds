@@ -6,6 +6,7 @@ import { KeyIdea } from "@/components/content/key-idea";
 import { M, MB } from "@/components/content/math";
 import { CodeBlock } from "@/components/content/code-block";
 import { Quiz } from "@/components/content/quiz";
+import { InterviewProblem } from "@/components/content/interview-problem";
 
 export default function Lesson() {
   return (
@@ -114,6 +115,63 @@ print("first probs:", proba[:5].round(3))`}</CodeBlock>
         { text: "It guarantees the outputs are exactly 0 or 1", why: "Outputs are probabilities in (0,1) from the sigmoid; the loss does not force hard labels." },
         { text: "It removes the need for any regularization", why: "Log-loss does not prevent weights from diverging under perfect separation; regularization is still needed." },
       ]} />
-    </>
+    <h2>Interview practice</h2>
+
+<InterviewProblem question="Why do we use log-loss to train logistic regression instead of squared error?" difficulty="easy" tag="Conceptual">
+  <p>Logistic regression models <M>{"p = \\sigma(w^\\top x)"}</M>, the probability of the positive class. Two reasons make log-loss (cross-entropy) the right objective:</p>
+  <ul>
+    <li><strong>It is the maximum-likelihood objective.</strong> For Bernoulli labels, the negative log-likelihood is exactly <M>{"-[y\\log p + (1-y)\\log(1-p)]"}</M>. Minimizing it is the principled MLE for this model.</li>
+    <li><strong>It is convex in the weights, while squared error on the sigmoid is not.</strong> Plugging <M>{"\\sigma"}</M> into <M>{"(y-\\sigma(w^\\top x))^2"}</M> produces a non-convex surface with flat regions and local minima, so gradient descent can stall. Log-loss gives a single global optimum.</li>
+    <li><strong>It punishes confident mistakes hard.</strong> As <M>{"p \\to 0"}</M> for a true positive, <M>{"-\\log p \\to \\infty"}</M>, which keeps gradients informative even deep in the saturated tails of the sigmoid where squared error gradients vanish.</li>
+  </ul>
+</InterviewProblem>
+
+<InterviewProblem question="Derive the gradient of the log-loss with respect to the weights, and explain why it has such a clean form." difficulty="medium" tag="Math">
+  <p>For one example let <M>{"z = w^\\top x"}</M> and <M>{"p = \\sigma(z) = 1/(1+e^{-z})"}</M>. The loss is:</p>
+  <MB>{"L = -\\big[y\\log p + (1-y)\\log(1-p)\\big]"}</MB>
+  <p>Use the key identity <M>{"\\sigma'(z) = \\sigma(z)\\,(1-\\sigma(z)) = p(1-p)"}</M>. By the chain rule:</p>
+  <MB>{"\\frac{\\partial L}{\\partial p} = -\\frac{y}{p} + \\frac{1-y}{1-p} = \\frac{p-y}{p(1-p)}"}</MB>
+  <p>Multiplying by <M>{"\\partial p / \\partial z = p(1-p)"}</M> the denominator cancels:</p>
+  <MB>{"\\frac{\\partial L}{\\partial z} = p - y, \\qquad \\frac{\\partial L}{\\partial w} = (p - y)\\,x"}</MB>
+  <p>So the gradient is just the <strong>prediction error times the feature vector</strong>. The cancellation is not luck: the sigmoid is the canonical link for the Bernoulli in the exponential family, and for any such generalized linear model the gradient reduces to <M>{"(\\hat{y}-y)x"}</M>. Summed over a batch this is <M>{"X^\\top(p - y)"}</M>.</p>
+</InterviewProblem>
+
+<InterviewProblem question="Your fraud classifier has only 1% positives. Trained logistic regression predicts almost everything as non-fraud. What is going on and how would you fix it?" difficulty="medium" tag="Applied">
+  <p>The model is not broken; it is correctly minimizing average log-loss on a heavily skewed set, where the cheapest strategy is to push the intercept so <M>{"p"}</M> sits near the base rate and rarely crosses the default 0.5 threshold. Things to do:</p>
+  <ul>
+    <li><strong>Move the decision threshold, do not trust 0.5.</strong> Logistic regression outputs calibrated probabilities; pick the operating threshold from a precision-recall curve to hit the business cost trade-off, e.g. flag if <M>{"p > 0.05"}</M>.</li>
+    <li><strong>Reweight or resample.</strong> Use class weights inversely proportional to frequency (in scikit-learn, <strong>class_weight=&quot;balanced&quot;</strong>) so each fraud case contributes more to the loss, or down-sample the majority.</li>
+    <li><strong>Evaluate with the right metrics.</strong> Accuracy is useless here; report PR-AUC, recall at a fixed precision, and the confusion matrix at your chosen threshold.</li>
+    <li><strong>Recalibrate after reweighting.</strong> Resampling shifts predicted probabilities away from the true base rate, so correct the intercept or apply Platt/isotonic calibration if you need probabilities, not just rankings.</li>
+  </ul>
+</InterviewProblem>
+
+<InterviewProblem question="Implement binary logistic regression training with batch gradient descent and L2 regularization in NumPy." difficulty="hard" tag="Coding">
+  <p>Using the gradient <M>{"X^\\top(p-y)/n + \\lambda w"}</M> (we exclude the bias from the penalty), a compact, numerically careful implementation is:</p>
+  <CodeBlock language="python" filename="logreg.py">{`import numpy as np
+
+def sigmoid(z):
+    # clip to avoid overflow in exp for large negative z
+    return np.where(z >= 0, 1 / (1 + np.exp(-z)),
+                    np.exp(z) / (1 + np.exp(z)))
+
+def train_logreg(X, y, lr=0.1, l2=1e-3, epochs=2000):
+    n, d = X.shape
+    Xb = np.hstack([np.ones((n, 1)), X])   # prepend bias column
+    w = np.zeros(d + 1)
+    for _ in range(epochs):
+        p = sigmoid(Xb @ w)
+        grad = Xb.T @ (p - y) / n
+        grad[1:] += l2 * w[1:]             # penalize weights, not bias
+        w -= lr * grad
+    return w
+
+def predict_proba(X, w):
+    Xb = np.hstack([np.ones((X.shape[0], 1)), X])
+    return sigmoid(Xb @ w)`}</CodeBlock>
+  <p>Key correctness points an interviewer probes: the <strong>numerically stable sigmoid</strong> (a naive <M>{"1/(1+e^{-z})"}</M> overflows for very negative <M>{"z"}</M>); <strong>not regularizing the bias</strong>, since shrinking the intercept biases predictions away from the base rate; and dividing the gradient by <M>{"n"}</M> so the learning rate is independent of batch size. For production you would also standardize features so L2 penalizes all coefficients on a comparable scale.</p>
+</InterviewProblem>
+
+      </>
   );
 }

@@ -6,6 +6,7 @@ import { KeyIdea } from "@/components/content/key-idea";
 import { M, MB } from "@/components/content/math";
 import { CodeBlock } from "@/components/content/code-block";
 import { Quiz } from "@/components/content/quiz";
+import { InterviewProblem } from "@/components/content/interview-problem";
 
 export default function Lesson() {
   return (
@@ -65,6 +66,59 @@ for dim in ["platform", "country", "app_version", "new_vs_returning"]:
         { text: "Guardrails make the experiment reach significance faster", why: "More metrics do not increase power; they can require multiple-comparison correction." },
         { text: "Guardrails are only needed for modeling cases, not product cases", why: "Guardrails are a product-metric concept and apply directly to product and metric cases." },
       ]} />
-    </>
+    <h2>Interview practice</h2>
+<InterviewProblem question="A product manager says weekly active users (WAU) dropped 8% last week. How would you structure your investigation?" difficulty="easy" tag="Case">
+  <p>Resist diving into a hypothesis immediately. Structure the case along two axes before touching data.</p>
+  <p><strong>1. Is the drop real?</strong></p>
+  <ul>
+    <li><strong>Instrumentation:</strong> Did logging change, did an app release break an event, is there a data-pipeline gap or late-arriving data for the most recent week?</li>
+    <li><strong>Definition:</strong> Did anyone change how WAU is computed (dedup logic, bot filtering, timezone bucketing)?</li>
+  </ul>
+  <p><strong>2. If real, segment to localize it.</strong> The goal is to find where the drop concentrates so the cause becomes obvious. Cut by:</p>
+  <ul>
+    <li><strong>Internal factors:</strong> platform (iOS vs Android vs web), app version, new vs returning users, geography, acquisition channel.</li>
+    <li><strong>External factors:</strong> seasonality (compare year-over-year, not just week-over-week), holidays, a competitor launch, a marketing campaign that ended.</li>
+  </ul>
+  <p>A drop isolated to one platform after a release points to a bug; a broad drop matching last year&apos;s same week points to seasonality. <strong>State your hypothesis, then name the one query that would confirm or kill it</strong> &mdash; interviewers reward this loop over a flat list of ideas.</p>
+</InterviewProblem>
+<InterviewProblem question="A ride-sharing team wants a single north-star metric for marketplace health. What would you propose and what are its failure modes?" difficulty="medium" tag="Case">
+  <p>Pick a metric that captures delivered value, not vanity. A strong candidate is <strong>completed rides per active user per week</strong>, because it ties together both sides of the marketplace and only counts trips that actually happened.</p>
+  <p>Justify it against alternatives:</p>
+  <ul>
+    <li><strong>Gross bookings ($):</strong> grows with price hikes even as rides fall &mdash; rewards the wrong thing.</li>
+    <li><strong>Raw ride count:</strong> ignores the user base; can rise just from acquisition spend while per-user engagement rots.</li>
+    <li><strong>Requests (not completions):</strong> counts demand the supply side failed to serve, so it can look healthy during an outage.</li>
+  </ul>
+  <p><strong>Failure modes &amp; guardrails.</strong> Any single metric can be gamed, so pair the north star with guardrails:</p>
+  <ul>
+    <li>It can rise while <strong>driver earnings</strong> or <strong>rider wait time</strong> degrade &mdash; track both as guardrails.</li>
+    <li>Averages hide a collapsing power-law tail; complement with a <strong>retention / cohort</strong> view.</li>
+    <li>It says nothing about <strong>unit economics</strong> &mdash; watch contribution margin so growth isn&apos;t bought with subsidies.</li>
+  </ul>
+  <p>The senior move is to frame it as <strong>one north star plus 2&ndash;3 guardrails</strong>, since marketplaces fail by sacrificing one side for the other.</p>
+</InterviewProblem>
+<InterviewProblem question="You ship a model to flag fraudulent transactions. Walk through how you would frame this as an ML case end to end." difficulty="hard" tag="Case">
+  <p>Drive the case through the modeling lifecycle, surfacing the assumptions a strong candidate makes explicit.</p>
+  <p><strong>1. Problem framing &amp; objective.</strong> Confirm it is binary classification with extreme class imbalance (fraud may be well under 1%). Crucially, the business objective is not accuracy &mdash; it is the dollar trade-off between <strong>fraud losses caught</strong> and <strong>false-positive friction</strong> (blocking good customers, manual-review cost).</p>
+  <p><strong>2. Label &amp; leakage.</strong> Fraud labels arrive late (chargebacks land weeks later), so recent &quot;clean&quot; transactions may be mislabeled. Use a label-maturity cutoff and split <strong>by time</strong>, never randomly &mdash; a random split leaks future patterns and inflates offline metrics.</p>
+  <p><strong>3. Metric.</strong> Accuracy is useless here; predicting &quot;not fraud&quot; scores 99%+. Optimize <strong>PR-AUC</strong> and report recall at a fixed, tolerable false-positive rate. Translate the chosen threshold into expected dollars:</p>
+  <MB>{"\\text{Net} = (\\text{TP}\\cdot v_{\\text{fraud}}) - (\\text{FP}\\cdot c_{\\text{friction}}) - (\\text{FN}\\cdot v_{\\text{fraud}})"}</MB>
+  <p>where <M>{"v_{\\text{fraud}}"}</M> is value saved per caught fraud and <M>{"c_{\\text{friction}}"}</M> the cost of a false block.</p>
+  <p><strong>4. Model &amp; deployment.</strong> Start with gradient-boosted trees on transaction + behavioral features; they handle mixed types and need little scaling. Score in real time, route mid-confidence cases to <strong>manual review</strong> rather than auto-block, and monitor for <strong>drift</strong> &mdash; fraudsters adapt, so an offline-static model decays fast and needs a retraining cadence plus a feedback loop from analyst decisions.</p>
+</InterviewProblem>
+<InterviewProblem question="In an A/B test the treatment lifts conversion from 10.0% to 10.6% with 50,000 users per arm. Is this significant? Show the calculation." difficulty="medium" tag="Math">
+  <p>Use a two-proportion z-test. The pooled rate is roughly <M>{"\\hat{p}=10.3\\%=0.103"}</M>. The standard error of the difference is:</p>
+  <MB>{"\\text{SE}=\\sqrt{\\hat{p}(1-\\hat{p})\\left(\\tfrac{1}{n_1}+\\tfrac{1}{n_2}\\right)}=\\sqrt{0.103\\cdot 0.897\\cdot \\tfrac{2}{50000}}"}</MB>
+  <p>That gives <M>{"\\text{SE}\\approx\\sqrt{3.70\\times10^{-6}}\\approx 0.00192"}</M>. The observed lift is <M>{"0.006"}</M>, so:</p>
+  <MB>{"z=\\frac{0.006}{0.00192}\\approx 3.1"}</MB>
+  <p>Since <M>{"|z|>1.96"}</M>, the result is significant at the 5% level (two-sided p &asymp; 0.002). But finish like a practitioner, not a calculator:</p>
+  <ul>
+    <li><strong>Practical vs statistical:</strong> a 0.6pp absolute lift (6% relative) may or may not clear the launch bar &mdash; check it against the minimum detectable effect set when the test was powered.</li>
+    <li><strong>Peeking:</strong> if you stopped early upon seeing significance, the p-value is optimistic; honor the pre-registered sample size or use a sequential test.</li>
+    <li><strong>Guardrails:</strong> confirm no offsetting harm (revenue per user, latency) before shipping on conversion alone.</li>
+  </ul>
+</InterviewProblem>
+
+      </>
   );
 }

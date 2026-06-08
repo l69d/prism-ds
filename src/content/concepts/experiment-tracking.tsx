@@ -6,6 +6,7 @@ import { KeyIdea } from "@/components/content/key-idea";
 import { M, MB } from "@/components/content/math";
 import { CodeBlock } from "@/components/content/code-block";
 import { Quiz } from "@/components/content/quiz";
+import { InterviewProblem } from "@/components/content/interview-problem";
 
 export default function Lesson() {
   return (
@@ -71,6 +72,91 @@ with mlflow.start_run():
         { text: "The name of the experiment", why: "A label organizes runs but carries no information about what produced the result." },
         { text: "The number of CPU cores", why: "Core count can affect speed and occasionally parallel ordering, but it is far less likely than a changed dataset to move the score from 0.91." },
       ]} />
-    </>
+    <h2>Interview practice</h2>
+<InterviewProblem question="What does it actually mean to make an ML experiment reproducible, and what minimal set of things must you version to get there?" difficulty="easy" tag="Conceptual">
+  <p>Reproducibility means that re-running the same experiment yields the same model and the same metrics &mdash; or at least metrics within known statistical noise. A logged accuracy number is worthless if you cannot regenerate it.</p>
+  <p>The minimal set of artifacts to version:</p>
+  <ul>
+    <li><strong>Code</strong> &mdash; a git commit SHA for the training script, preprocessing, and library pins (a lockfile or container image), so the exact transforms and model definition are recoverable.</li>
+    <li><strong>Data</strong> &mdash; a content hash or version tag of the exact training/validation snapshot (tools like DVC or a dataset registry). &quot;The customers table&quot; mutates daily; a hash does not.</li>
+    <li><strong>Config / hyperparameters</strong> &mdash; learning rate, seed, splits, feature set, every knob that changes the result.</li>
+    <li><strong>Environment</strong> &mdash; Python and CUDA versions, package versions; ideally a frozen image.</li>
+    <li><strong>The seed</strong> &mdash; for data shuffling, weight init, and dropout, so stochastic steps repeat.</li>
+  </ul>
+  <p>The key idea: the model is a <strong>pure function</strong> of (code, data, config, environment, seed). Pin all five and the output is deterministic; leave any one floating and you cannot trust the comparison.</p>
+</InterviewProblem>
+<InterviewProblem question="A teammate says model B beat model A by 0.4% AUC, so we should ship B. What do you check before trusting that comparison?" difficulty="medium" tag="Applied">
+  <p>A 0.4% gap is small enough that it could be noise or an apples-to-oranges comparison. I&apos;d use the tracking system to confirm the two runs are genuinely comparable:</p>
+  <ul>
+    <li><strong>Same eval data and split.</strong> Compare the logged data hash and split seed. If B was scored on a different validation snapshot or a re-shuffled split, the gap is meaningless.</li>
+    <li><strong>Same metric definition.</strong> Confirm both logged AUC the same way (same threshold-free computation, same positive class, no leakage from a changed feature).</li>
+    <li><strong>Statistical significance.</strong> 0.4% on a small test set is within noise. I&apos;d look at variance across seeds: re-run each model with several seeds and compare the distributions, not two point estimates.</li>
+    <li><strong>No train/eval leakage between runs.</strong> Check that B&apos;s feature pipeline did not accidentally fit on validation data.</li>
+    <li><strong>Cost of the change.</strong> Even if real, weigh 0.4% against added latency, complexity, or training cost logged for B.</li>
+  </ul>
+  <p>The reason experiment tracking matters here: without logged data hashes, split seeds, and per-seed metrics, you literally cannot answer any of these questions &mdash; you are comparing two numbers with no provenance.</p>
+</InterviewProblem>
+<InterviewProblem question="Estimate the standard error of a test-set AUC and explain how many seeds you would re-run to detect a real 0.4% improvement." difficulty="hard" tag="Math">
+  <p>Treat each model&apos;s test metric as a random variable whose spread comes from finite test data plus training stochasticity (init, shuffling). Suppose across <M>{"k"}</M> seeds we observe sample standard deviation <M>{"s"}</M> of the AUC. The standard error of the mean metric is:</p>
+  <MB>{"\\mathrm{SE} = \\frac{s}{\\sqrt{k}}"}</MB>
+  <p>To call a difference <M>{"\\Delta = 0.004"}</M> significant at roughly the 95% level for a two-sided comparison of two means, we want the gap to exceed about two combined standard errors:</p>
+  <MB>{"\\Delta \\gtrsim 2\\sqrt{\\mathrm{SE}_A^2 + \\mathrm{SE}_B^2} = 2\\sqrt{\\tfrac{2 s^2}{k}}"}</MB>
+  <p>Solving for the number of seeds per model:</p>
+  <MB>{"k \\gtrsim \\frac{8 s^2}{\\Delta^2}"}</MB>
+  <p>So if seed-to-seed AUC noise is <M>{"s = 0.005"}</M> and we want to detect <M>{"\\Delta = 0.004"}</M>, then <M>{"k \\gtrsim 8(0.005)^2/(0.004)^2 \\approx 12.5"}</M> &mdash; roughly 13 seeds each. The practical lesson: a single-run 0.4% win is almost never trustworthy, and the only way to make this call is to <strong>log every seed&apos;s metric</strong> so you can estimate <M>{"s"}</M> at all.</p>
+</InterviewProblem>
+<InterviewProblem question="Instrument a training script so every run is reproducible and comparable. Show what you would log." difficulty="medium" tag="Coding">
+  <p>The core pattern: fix the seed, capture provenance (code SHA, data hash, environment), then log params, metrics, and the model artifact under one run ID. Below is a tracker-agnostic sketch (the calls map cleanly onto MLflow, Weights &amp; Biases, etc.).</p>
+  <CodeBlock language="python" filename="train.py">{`import hashlib, subprocess, random
+import numpy as np
+import tracker  # stand-in for mlflow / wandb
+
+SEED = 42
+
+def set_seeds(seed):
+    random.seed(seed)
+    np.random.seed(seed)
+    # torch.manual_seed(seed); torch.cuda.manual_seed_all(seed)
+
+def git_sha():
+    return subprocess.check_output(
+        ["git", "rev-parse", "HEAD"]).decode().strip()
+
+def data_hash(df):
+    # content hash => the exact snapshot is recoverable, not "today's table"
+    return hashlib.sha256(
+        df.to_csv(index=False).encode()).hexdigest()[:12]
+
+def run_experiment(train_df, val_df, params):
+    set_seeds(SEED)
+    with tracker.start_run() as run:
+        # 1. provenance: code + data + environment
+        tracker.log_params({
+            "git_sha": git_sha(),
+            "train_hash": data_hash(train_df),
+            "val_hash": data_hash(val_df),
+            "seed": SEED,
+            **params,           # lr, depth, feature_set, ...
+        })
+
+        model = fit_model(train_df, params)
+
+        # 2. metrics logged against the SAME val snapshot above
+        auc = evaluate(model, val_df)
+        tracker.log_metrics({"val_auc": auc})
+
+        # 3. the artifact itself, tied to this run id
+        tracker.log_model(model, name="model")
+        return run.id, auc
+
+if __name__ == "__main__":
+    for seed in range(13):          # multiple seeds => estimate noise
+        SEED = seed
+        run_experiment(train_df, val_df, {"lr": 0.05, "depth": 6})
+`}</CodeBlock>
+  <p>Why each piece matters: the <strong>git SHA + data hashes</strong> make the run a pure function of recoverable inputs; logging against the <strong>same val snapshot</strong> guarantees comparability across runs; logging the <strong>model artifact under the run ID</strong> means a winning metric can be traced back to a deployable file; and the <strong>seed loop</strong> produces the distribution you need to judge whether a small gap is real.</p>
+</InterviewProblem>
+
+      </>
   );
 }

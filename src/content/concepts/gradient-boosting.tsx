@@ -6,6 +6,7 @@ import { KeyIdea } from "@/components/content/key-idea";
 import { M, MB } from "@/components/content/math";
 import { CodeBlock } from "@/components/content/code-block";
 import { Quiz } from "@/components/content/quiz";
+import { InterviewProblem } from "@/components/content/interview-problem";
 
 export default function Lesson() {
   return (
@@ -68,6 +69,71 @@ model.fit(
         { text: "A bootstrap-resampled copy of the data, independent of other trees", why: "That describes bagging / random forests, where trees are independent, not boosting." },
         { text: "The variance of the predictions across trees", why: "Boosting reduces bias by sequential correction; it does not target prediction variance." },
       ]} />
-    </>
+    <h2>Interview practice</h2>
+
+<InterviewProblem question="Explain gradient boosting to someone who already knows decision trees. Why is it called 'gradient' boosting?" difficulty="easy" tag="Conceptual">
+  <p>Gradient boosting builds an <strong>additive ensemble of shallow trees</strong>, where each new tree corrects the mistakes of the ensemble built so far. You start with a constant prediction (for squared error, the mean of the target), then repeatedly add a tree fit to the current errors, scaled by a learning rate.</p>
+  <p>The &quot;gradient&quot; part comes from viewing this as <strong>gradient descent in function space</strong>. We want to minimize a loss <M>{"L(y, F(x))"}</M> over the prediction function <M>{"F"}</M>. At each step we compute the negative gradient of the loss with respect to the current predictions, and fit the next tree to those pseudo-residuals:</p>
+  <MB>{"r_i = -\\left.\\frac{\\partial L(y_i, F(x_i))}{\\partial F(x_i)}\\right|_{F = F_{m-1}}"}</MB>
+  <p>For squared error <M>{"L = \\tfrac{1}{2}(y - F)^2"}</M>, the negative gradient is exactly <M>{"y_i - F(x_i)"}</M>, the ordinary residual. That is why the slogan is &quot;fit the residuals, again and again&quot; — for squared loss the pseudo-residual <strong>is</strong> the residual. For other losses (log loss, Huber, quantile) the pseudo-residual is a different expression, but the recipe is identical.</p>
+</InterviewProblem>
+
+<InterviewProblem question="How does gradient boosting differ from random forests? When would you reach for one over the other?" difficulty="medium" tag="Conceptual">
+  <p>Both are tree ensembles, but they attack the bias-variance tradeoff from opposite ends.</p>
+  <ul>
+    <li><strong>Random forest</strong> grows many <strong>deep, low-bias, high-variance</strong> trees <strong>independently</strong> on bootstrap samples and <strong>averages</strong> them. Averaging reduces variance; the trees do not talk to each other, so training is embarrassingly parallel and the model is hard to overfit by adding more trees.</li>
+    <li><strong>Gradient boosting</strong> grows <strong>shallow, high-bias, low-variance</strong> trees <strong>sequentially</strong>, each one reducing the residual error of the running ensemble. It reduces bias; trees are dependent, so adding too many trees (or too large a learning rate) <strong>will</strong> overfit.</li>
+  </ul>
+  <p>Practical guidance:</p>
+  <ul>
+    <li>Boosting usually gives <strong>higher accuracy on tabular data</strong> when you can afford to tune learning rate, tree count, and depth — it is the default for Kaggle-style structured problems and most quant tabular signals.</li>
+    <li>Random forests are a great <strong>strong baseline</strong>: fewer knobs, robust to defaults, parallel, and the extra trees never hurt. Good when you want a quick, low-maintenance model or solid feature-importance estimates.</li>
+    <li>Because boosting is sequential and order-dependent, it is more sensitive to noisy labels and needs early stopping on a validation set.</li>
+  </ul>
+</InterviewProblem>
+
+<InterviewProblem question="In XGBoost, what is the role of the learning rate, and why does it interact with the number of trees? How would you tune them together?" difficulty="medium" tag="Applied">
+  <p>The learning rate <M>{"\\eta"}</M> (often called <strong>shrinkage</strong>) scales the contribution of each new tree before it is added:</p>
+  <MB>{"F_m(x) = F_{m-1}(x) + \\eta \\cdot f_m(x)"}</MB>
+  <p>Small <M>{"\\eta"}</M> means each tree only nudges the prediction, so the model needs <strong>more trees</strong> to fit, but each step is more conservative and the ensemble <strong>generalizes better</strong> (less overfitting). There is a direct tradeoff: roughly, halving <M>{"\\eta"}</M> requires about doubling the number of trees to reach the same training fit.</p>
+  <p>A standard recipe:</p>
+  <ul>
+    <li>Fix a small-ish learning rate (e.g. <M>{"\\eta = 0.05"}</M> or <M>{"0.1"}</M>).</li>
+    <li>Use <strong>early stopping</strong> on a validation set to choose the number of trees automatically — train with a large cap and stop when validation loss stops improving for, say, 50 rounds.</li>
+    <li>Tune tree structure (max depth, min child weight) and regularization (<M>{"\\lambda"}</M>, <M>{"\\gamma"}</M>, subsample, colsample) with this setup.</li>
+    <li>Optionally, lower <M>{"\\eta"}</M> at the end and let early stopping add more trees for a final accuracy bump, at the cost of training time.</li>
+  </ul>
+  <CodeBlock language="python" filename="xgb_early_stop.py">{`import xgboost as xgb
+from sklearn.model_selection import train_test_split
+
+X_tr, X_val, y_tr, y_val = train_test_split(X, y, test_size=0.2, random_state=0)
+
+model = xgb.XGBRegressor(
+    n_estimators=5000,      # large cap; early stopping picks the real count
+    learning_rate=0.05,     # small shrinkage -> needs many trees, generalizes well
+    max_depth=4,
+    subsample=0.8,
+    colsample_bytree=0.8,
+    reg_lambda=1.0,
+    early_stopping_rounds=50,
+    eval_metric="rmse",
+)
+model.fit(X_tr, y_tr, eval_set=[(X_val, y_val)], verbose=False)
+print("best #trees:", model.best_iteration + 1)`}</CodeBlock>
+</InterviewProblem>
+
+<InterviewProblem question="Derive the optimal leaf weight in XGBoost's second-order objective, and explain what the resulting 'gain' formula tells you about splitting." difficulty="hard" tag="Math">
+  <p>XGBoost approximates the loss at each boosting step with a <strong>second-order Taylor expansion</strong>. For a fixed tree structure, write <M>{"g_i"}</M> and <M>{"h_i"}</M> for the first and second derivatives of the loss at sample <M>{"i"}</M> with respect to the current prediction. The regularized objective for the tree, with weight <M>{"w_j"}</M> on leaf <M>{"j"}</M>, is</p>
+  <MB>{"\\tilde{\\mathcal{L}} = \\sum_j \\left[ \\left(\\sum_{i \\in I_j} g_i\\right) w_j + \\tfrac{1}{2}\\left(\\sum_{i \\in I_j} h_i + \\lambda\\right) w_j^2 \\right] + \\gamma T"}</MB>
+  <p>where <M>{"I_j"}</M> is the set of samples in leaf <M>{"j"}</M>, <M>{"\\lambda"}</M> is L2 regularization, <M>{"\\gamma"}</M> penalizes the number of leaves <M>{"T"}</M>. Let <M>{"G_j = \\sum_{i \\in I_j} g_i"}</M> and <M>{"H_j = \\sum_{i \\in I_j} h_i"}</M>. Each leaf is an independent quadratic in <M>{"w_j"}</M>; setting the derivative to zero gives the optimal weight</p>
+  <MB>{"w_j^* = -\\frac{G_j}{H_j + \\lambda}"}</MB>
+  <p>Substituting back, the best achievable objective for that structure is</p>
+  <MB>{"\\tilde{\\mathcal{L}}^* = -\\frac{1}{2}\\sum_j \\frac{G_j^2}{H_j + \\lambda} + \\gamma T"}</MB>
+  <p>When evaluating a candidate split that divides a node into left (<M>{"L"}</M>) and right (<M>{"R"}</M>), the <strong>gain</strong> is the drop in this objective:</p>
+  <MB>{"\\text{Gain} = \\tfrac{1}{2}\\left[ \\frac{G_L^2}{H_L + \\lambda} + \\frac{G_R^2}{H_R + \\lambda} - \\frac{(G_L + G_R)^2}{H_L + H_R + \\lambda} \\right] - \\gamma"}</MB>
+  <p>Interpretation: a split is only taken if the score improvement of separating the gradients beats <M>{"\\gamma"}</M>, so <M>{"\\gamma"}</M> acts as a <strong>minimum-gain pruning threshold</strong>. The <M>{"\\lambda"}</M> in each denominator shrinks leaf weights and penalizes leaves with little curvature (small <M>{"H"}</M>), which is what makes the second-order objective more stable and less greedy than plain residual fitting.</p>
+</InterviewProblem>
+
+      </>
   );
 }

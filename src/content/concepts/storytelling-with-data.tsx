@@ -5,6 +5,8 @@ import { Callout } from "@/components/content/callout";
 import { KeyIdea } from "@/components/content/key-idea";
 import { CodeBlock } from "@/components/content/code-block";
 import { Quiz } from "@/components/content/quiz";
+import { InterviewProblem } from "@/components/content/interview-problem";
+import { M } from "@/components/content/math";
 
 export default function Lesson() {
   return (
@@ -139,6 +141,76 @@ plt.show()`}</CodeBlock>
           { text: "Add a legend with all 10 product names in distinct colors", why: "Ten competing colors plus a legend force slow serial decoding and bury the one series that matters." },
         ]}
       />
-    </>
+    <h2>Interview practice</h2>
+<InterviewProblem question="What does it mean to lead the eye to the insight in a chart, and name three pre-attentive cues you can use to do it?" difficulty="easy" tag="Conceptual">
+  <p><strong>Leading the eye</strong> means designing a visual so the single most important comparison is the first thing a viewer notices, before they consciously read anything. You exploit <strong>pre-attentive attributes</strong> &mdash; features the visual cortex processes in under ~250ms, in parallel, without scanning.</p>
+  <ul>
+    <li><strong>Color/hue saturation</strong> &mdash; gray out everything except the one series that carries the message. The single saturated line reads as &quot;look here&quot;.</li>
+    <li><strong>Position &amp; alignment</strong> &mdash; sorting bars by value (not alphabetically) turns &quot;which is biggest&quot; into a glance instead of a search.</li>
+    <li><strong>Size/weight</strong> &mdash; a thicker line, a larger point, or bolder type encodes importance directly.</li>
+  </ul>
+  <p>Others include orientation, enclosure (a box around a region), and added marks (a direct label or arrow on the point that matters). The rule of thumb: <strong>de-emphasize the context, emphasize the one thing</strong>. If everything is highlighted, nothing is.</p>
+</InterviewProblem>
+<InterviewProblem question="Stakeholders are confused by a dashboard with 14 KPIs and a pie chart of 9 categories. How would you restructure it to actually tell a story?" difficulty="medium" tag="Applied">
+  <p>The core diagnosis is <strong>no hierarchy and no narrative</strong> &mdash; 14 equally-weighted KPIs force the reader to do the analysis themselves, and a 9-slice pie defeats the one thing pies are weak at (comparing similar angles).</p>
+  <ul>
+    <li><strong>Start from the question, not the data.</strong> Ask &quot;what decision does this dashboard support?&quot; Pick the 1&ndash;3 metrics that drive that decision and make them the headline; demote the rest to a detail tab or remove them.</li>
+    <li><strong>Impose a hierarchy.</strong> Use the inverted-pyramid / Z-pattern: the single headline number top-left, supporting trend next, granular breakdowns below the fold. Readers in Western scripts scan top-left first, so put the punchline there.</li>
+    <li><strong>Replace the pie with a sorted horizontal bar chart.</strong> Humans compare lengths along a common baseline far more accurately than angles (Cleveland &amp; McGill&apos;s perceptual ranking). Sorting makes rank instantly readable.</li>
+    <li><strong>Annotate the insight in words.</strong> A title like &quot;Churn rose 4pts in EU after the price change&quot; beats a generic &quot;Churn by Region&quot; &mdash; the chart should state its conclusion, not just present evidence.</li>
+    <li><strong>Add a clear takeaway / call to action.</strong> Every chart earns its place by changing a decision; if removing it changes nothing, cut it.</li>
+  </ul>
+  <p>The reframe: a dashboard is not a data dump, it is an argument with a claim, evidence, and a recommended action.</p>
+</InterviewProblem>
+<InterviewProblem question="An exec says your model lifts revenue 12%. Walk through how you would present that single number honestly and persuasively without overstating it." difficulty="medium" tag="Case">
+  <p>The goal is to be <strong>persuasive and trustworthy at once</strong> &mdash; a single point estimate with no context is both unconvincing to a skeptic and dangerous if it later moves.</p>
+  <ul>
+    <li><strong>Anchor to a baseline.</strong> 12% relative to what? Show the counterfactual (control / pre-period) next to the treatment so the lift is a visible gap, not a claim.</li>
+    <li><strong>Show uncertainty, don&apos;t hide it.</strong> Present an interval, e.g. <M>{"12\\% \\pm 3\\%"}</M> at 95% confidence, so the audience sees the lift is unlikely to be noise. Quoting only the midpoint invites a later &quot;it was only 9%&quot; credibility hit.</li>
+    <li><strong>State the denominator and absolute size.</strong> 12% of a small segment may be tiny in dollars; pair the percent with the absolute revenue impact so the exec can prioritize.</li>
+    <li><strong>Name the assumptions and risks</strong> &mdash; novelty effects, seasonality, whether the test population generalizes. Pre-empting the objection builds more trust than burying it.</li>
+    <li><strong>Lead visually with the gap.</strong> Two bars (control vs. treatment) with the delta annotated directly, error bars shown, everything else muted. The headline reads the conclusion: &quot;Treatment added \$X (+12%, 95% CI 9&ndash;15%).&quot;</li>
+  </ul>
+  <p>Honesty <em>is</em> the persuasion strategy here: an exec who has been burned by a confident wrong number will discount your next ten charts.</p>
+</InterviewProblem>
+<InterviewProblem question="Write a function that takes a list of category values and returns indices to highlight so a bar chart leads the eye to the top contributor and any outliers, returning a color list (gray for context, one accent for the focus)." difficulty="hard" tag="Coding">
+  <p>The storytelling principle in code: <strong>compute which bars carry the message, color only those, mute the rest.</strong> We accent the single largest bar (the headline) and flag statistical outliers via a robust z-score using the median and MAD, which is resistant to the very outliers we want to find.</p>
+  <CodeBlock language="python" filename="lead_the_eye.py">{`import numpy as np
+
+GRAY, ACCENT, OUTLIER = "#cccccc", "#1f77b4", "#d62728"
+
+def highlight_colors(values, z_thresh=3.5):
+    """Return a per-bar color list that leads the eye.
+
+    - The single max bar gets the ACCENT color (the headline).
+    - Robust-z outliers get the OUTLIER color (worth a callout).
+    - Everything else is muted GRAY context.
+    """
+    x = np.asarray(values, dtype=float)
+    n = len(x)
+    colors = [GRAY] * n
+
+    # Robust z-score: median + MAD resist contamination by outliers.
+    med = np.median(x)
+    mad = np.median(np.abs(x - med))
+    if mad > 0:
+        # 0.6745 scales MAD to match std under normality.
+        robust_z = 0.6745 * (x - med) / mad
+        for i in range(n):
+            if abs(robust_z[i]) > z_thresh:
+                colors[i] = OUTLIER
+
+    # The headline bar always wins the accent, even if also an outlier.
+    top = int(np.argmax(x))
+    colors[top] = ACCENT
+    return colors
+
+vals = [10, 12, 11, 13, 9, 48, 12]
+print(highlight_colors(vals))
+# bar 5 (value 48) is both the max and an outlier -> ACCENT wins`}</CodeBlock>
+  <p>Why MAD instead of mean/std: a single huge bar inflates the standard deviation and can mask itself, so a plain z-score under-detects the outlier it is meant to find. The robust version keeps the &quot;what should the eye land on&quot; decision stable. The design choice that the max bar overrides the outlier color encodes a narrative priority &mdash; one clear protagonist beats two competing accents.</p>
+</InterviewProblem>
+
+      </>
   );
 }

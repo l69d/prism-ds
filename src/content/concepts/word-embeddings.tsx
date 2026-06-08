@@ -6,6 +6,7 @@ import { KeyIdea } from "@/components/content/key-idea";
 import { M, MB } from "@/components/content/math";
 import { CodeBlock } from "@/components/content/code-block";
 import { Quiz } from "@/components/content/quiz";
+import { InterviewProblem } from "@/components/content/interview-problem";
 
 export default function Lesson() {
   return (
@@ -61,6 +62,51 @@ print(model.wv.most_similar("cat", topn=3))   # nearest neighbors`}</CodeBlock>
         { text: "They were manually labeled as synonyms before training.", why: "Embeddings are learned unsupervised from raw text with no synonym labels." },
         { text: "They occur with the same total frequency in the corpus.", why: "Frequency affects sampling, not meaning; rare and common words can still be close if contexts match." },
       ]} />
-    </>
+    <h2>Interview practice</h2>
+<InterviewProblem question="What does it mean that word embeddings capture meaning as direction, and why is the famous king - man + woman = queen analogy a consequence of that?" difficulty="easy" tag="Conceptual">
+  <p>An embedding maps each word to a dense vector in <M>{"\\mathbb{R}^d"}</M> (typically <M>{"d \\in [50, 300]"}</M>) such that <strong>semantic relationships become geometric ones</strong>. Words that appear in similar contexts land near each other, and consistent differences in meaning become consistent <strong>directions</strong>.</p>
+  <ul>
+    <li>The vector <M>{"v_{\\text{king}} - v_{\\text{man}}"}</M> isolates the &quot;royalty minus male-human&quot; offset.</li>
+    <li>Adding that offset to <M>{"v_{\\text{woman}}"}</M> lands near <M>{"v_{\\text{queen}}"}</M>, because the gender direction is roughly parallel across many word pairs (man/woman, king/queen, actor/actress).</li>
+  </ul>
+  <p>Formally, analogy solving is a nearest-neighbor search:</p>
+  <MB>{"\\hat{w} = \\arg\\max_{w} \\; \\cos\\big(v_w,\\; v_{\\text{king}} - v_{\\text{man}} + v_{\\text{woman}}\\big)"}</MB>
+  <p>Caveat: this works only approximately, and the search usually <strong>excludes the input words</strong> themselves, otherwise &quot;king&quot; often wins trivially. The linear structure emerges because both Word2Vec and GloVe end up factorizing a (shifted) co-occurrence matrix, where ratios of co-occurrence probabilities behave multiplicatively, i.e. additively in log space.</p>
+</InterviewProblem>
+<InterviewProblem question="Why do we use cosine similarity rather than Euclidean distance to compare word vectors, and when would that choice matter?" difficulty="medium" tag="Conceptual">
+  <p>Cosine measures the <strong>angle</strong> between vectors, ignoring magnitude:</p>
+  <MB>{"\\cos(u, v) = \\frac{u \\cdot v}{\\lVert u \\rVert \\, \\lVert v \\rVert}"}</MB>
+  <p>This matters because in trained embeddings, <strong>vector norm correlates with token frequency and information content</strong>, not with topic. Frequent or high-loss words drift to large norms during SGD. If you used raw Euclidean distance, a rare word and a common synonym could look far apart purely because of a norm gap, even when they point the same way.</p>
+  <ul>
+    <li>Cosine factors out that nuisance, isolating the <strong>direction</strong> that encodes meaning.</li>
+    <li>Note that on <strong>L2-normalized</strong> vectors the two are equivalent: <M>{"\\lVert u - v \\rVert^2 = 2 - 2\\cos(u, v)"}</M>, so ranking by squared distance equals ranking by cosine. Normalize first and the question dissolves.</li>
+    <li>When magnitude <strong>is</strong> the signal (e.g. some retrieval setups where confident embeddings should dominate), prefer the dot product instead.</li>
+  </ul>
+</InterviewProblem>
+<InterviewProblem question="Walk through the skip-gram with negative sampling objective. Why was negative sampling introduced over the original softmax, and what is each negative example doing?" difficulty="hard" tag="Math">
+  <p>Skip-gram predicts context words from a center word. The naive objective uses a full softmax over the vocabulary <M>{"V"}</M>:</p>
+  <MB>{"P(c \\mid w) = \\frac{\\exp(v_c \\cdot v_w)}{\\sum_{c' \\in V} \\exp(v_{c'} \\cdot v_w)}"}</MB>
+  <p>The denominator sums over <strong>every word in the vocabulary</strong> (often <M>{"10^5"}</M> to <M>{"10^6"}</M>), so each gradient step is <M>{"O(|V|)"}</M> and infeasible. <strong>Negative sampling (SGNS)</strong> replaces this with a binary classification task: distinguish true (center, context) pairs from <M>{"k"}</M> fake pairs drawn from a noise distribution. The per-pair loss is:</p>
+  <MB>{"-\\log \\sigma(v_c \\cdot v_w) - \\sum_{i=1}^{k} \\mathbb{E}_{c_i \\sim P_n}\\big[\\log \\sigma(-v_{c_i} \\cdot v_w)\\big]"}</MB>
+  <ul>
+    <li>The first term pulls genuine co-occurring vectors <strong>together</strong> (pushes their dot product up).</li>
+    <li>Each negative term pushes a randomly sampled word <strong>away</strong>, preventing the trivial solution where all vectors collapse to point the same direction.</li>
+    <li>Cost drops to <M>{"O(k)"}</M> per step, with <M>{"k"}</M> around 5 to 20 for small corpora, 2 to 5 for large ones.</li>
+    <li>Negatives are sampled from the unigram distribution raised to the <M>{"3/4"}</M> power, <M>{"P_n(w) \\propto f(w)^{0.75}"}</M>, which dampens very frequent words and boosts rare ones relative to raw frequency.</li>
+  </ul>
+  <p>Levy and Goldberg showed SGNS implicitly factorizes the <strong>shifted PMI matrix</strong>, <M>{"v_w \\cdot v_c \\approx \\text{PMI}(w, c) - \\log k"}</M>, which connects it directly to count-based methods like GloVe.</p>
+</InterviewProblem>
+<InterviewProblem question="A teammate trains Word2Vec on your support-ticket corpus, then ships those static vectors as features for a sentiment classifier. Results are mediocre. How would you diagnose and improve this?" difficulty="medium" tag="Applied">
+  <p>I would attack three layers: data, the embedding choice, and the downstream usage.</p>
+  <ul>
+    <li><strong>Coverage and OOV.</strong> Check what fraction of tokens are out-of-vocabulary. A support corpus has typos, product codes, and SKUs that a min-count filter drops, leaving them as zero vectors. Switch to <strong>fastText</strong>, which composes vectors from character n-grams and handles OOV and misspellings gracefully.</li>
+    <li><strong>Corpus size.</strong> Word2Vec needs tens of millions of tokens to converge. If the ticket corpus is small, <strong>start from pretrained vectors and fine-tune</strong>, or just use pretrained, rather than training from scratch on thin data.</li>
+    <li><strong>Static vs contextual mismatch.</strong> Static embeddings give one vector per word, so &quot;crash&quot; (software) and &quot;crash&quot; (car) and polarity-flipping &quot;not good&quot; are not distinguished. For sentiment, a contextual model (a fine-tuned transformer encoder) usually wins decisively. That is the likely root cause.</li>
+    <li><strong>Aggregation.</strong> If they averaged word vectors into a document vector, plain mean is a weak baseline. Try TF-IDF-weighted averaging, or SIF (smooth inverse frequency with common-component removal), before concluding the embeddings are bad.</li>
+  </ul>
+  <p>I would A/B these in order of effort: TF-IDF weighting and pretrained init first (cheap), then a fine-tuned transformer as the upper-bound comparison.</p>
+</InterviewProblem>
+
+      </>
   );
 }

@@ -6,6 +6,7 @@ import { KeyIdea } from "@/components/content/key-idea";
 import { M, MB } from "@/components/content/math";
 import { CodeBlock } from "@/components/content/code-block";
 import { Quiz } from "@/components/content/quiz";
+import { InterviewProblem } from "@/components/content/interview-problem";
 
 export default function Lesson() {
   return (
@@ -69,6 +70,83 @@ log = {"model_version": "v3.2.1", "data_snapshot": "2026-06-01",
         { text: "The law requires race to be a feature in all credit models", why: "No such requirement exists; in fact using it at inference can be disparate treatment." },
         { text: "SHAP values cannot be computed once a feature is removed", why: "SHAP works fine on whatever feature set remains; this is unrelated to the fairness issue." },
       ]} />
-    </>
+    <h2>Interview practice</h2>
+<InterviewProblem question="A bank's credit model is accused of being biased against a protected group. Explain the difference between demographic parity and equalized odds, and why you usually can't satisfy both." difficulty="easy" tag="Conceptual">
+  <p>Both are group-fairness criteria but they constrain different quantities.</p>
+  <ul>
+    <li><strong>Demographic parity:</strong> the approval rate is equal across groups, <M>{"P(\\hat{Y}=1 \\mid A=a)"}</M> is the same for every protected attribute value <M>{"a"}</M>. It ignores whether applicants actually repay.</li>
+    <li><strong>Equalized odds:</strong> the model has equal true-positive and false-positive rates across groups, i.e. <M>{"P(\\hat{Y}=1 \\mid Y=y, A=a)"}</M> matches across <M>{"a"}</M> for both <M>{"y=0"}</M> and <M>{"y=1"}</M>. It conditions on the true outcome, so it tolerates different approval rates if the underlying repayment rates differ.</li>
+  </ul>
+  <p>The classic impossibility result (Kleinberg, Chouldechova) says that when base rates differ across groups (<M>{"P(Y=1\\mid A=a)"}</M> is not constant), you cannot simultaneously have calibration, equal false-positive rates, and equal false-negative rates except in degenerate cases. So demographic parity and equalized odds generally conflict, and the right choice is a <strong>policy decision tied to the harm</strong>: parity targets equal access, equalized odds targets equal error burden. State the tradeoff explicitly rather than picking silently.</p>
+</InterviewProblem>
+<InterviewProblem question="Your team drops the 'race' column from the training data and declares the model fair. Why is this 'fairness through unawareness' insufficient, and what would you do instead?" difficulty="medium" tag="Applied">
+  <p>Removing the protected attribute does not remove the information. Other features act as <strong>proxies</strong>: zip code, surname, browsing device, or first name can be highly correlated with race or gender, so a sufficiently flexible model reconstructs the protected signal and the disparate impact persists. Worse, by deleting the column you also lose the ability to <strong>measure</strong> the disparity.</p>
+  <p>A more defensible program:</p>
+  <ul>
+    <li><strong>Keep the attribute for auditing, not for prediction.</strong> Hold it out of the feature set but retain it to compute group metrics.</li>
+    <li><strong>Measure outcomes, not intentions.</strong> Compute selection rates and error rates per group; flag where the disparate-impact ratio (the &quot;four-fifths&quot; rule) falls below 0.8.</li>
+    <li><strong>Mitigate at the right stage:</strong> pre-processing (reweighing, removing proxy leakage), in-processing (a fairness-constrained or adversarial objective), or post-processing (group-specific thresholds via the equalized-odds method).</li>
+    <li><strong>Document the decision</strong> in a model card and re-run the audit on every retrain, since drift can reintroduce bias.</li>
+  </ul>
+  <p>The headline: proxy variables mean unawareness gives you plausible deniability, not fairness.</p>
+</InterviewProblem>
+<InterviewProblem question="Compute the disparate-impact ratio and explain what an audit trail must capture so a regulator could reproduce a single rejected decision two years later." difficulty="medium" tag="Math">
+  <p>Suppose group A is approved at rate <M>{"p_A = 0.60"}</M> and group B at <M>{"p_B = 0.42"}</M>. The disparate-impact ratio compares the disadvantaged group's selection rate to the favored group's:</p>
+  <MB>{"\\text{DI} = \\frac{\\min(p_A, p_B)}{\\max(p_A, p_B)} = \\frac{0.42}{0.60} = 0.70"}</MB>
+  <p>Under the four-fifths rule a ratio below <M>{"0.80"}</M> is presumptive adverse impact, so <M>{"0.70"}</M> would trigger scrutiny. Note this flags a statistical pattern, not proof of discrimination; you then test whether the gap is justified by a legitimate business factor.</p>
+  <p>To reproduce one rejected decision years later, the audit trail must pin down everything that fed it:</p>
+  <ul>
+    <li><strong>Model version</strong> and a hash of the exact serialized artifact (weights plus preprocessing).</li>
+    <li><strong>Training data snapshot</strong> reference and the feature pipeline / transformation code version.</li>
+    <li><strong>The input feature vector</strong> as scored, plus the raw application it derived from.</li>
+    <li><strong>The output</strong>: predicted score, the decision threshold in force at that timestamp, and the final action.</li>
+    <li><strong>An explanation record</strong> (e.g. SHAP attributions) and the adverse-action reasons given to the applicant.</li>
+    <li><strong>Provenance metadata</strong>: who deployed it, when, approval sign-offs, and any override.</li>
+  </ul>
+  <p>The principle is <strong>determinism plus immutability</strong>: given the logged version and input, re-running must yield the same score, and the log must be append-only so it cannot be edited after the fact.</p>
+</InterviewProblem>
+<InterviewProblem question="A stakeholder asks for a feature attribution for one specific prediction. Implement a KernelSHAP-style local explanation and explain why these attributions are descriptive, not causal." difficulty="hard" tag="Coding">
+  <p>SHAP attributes a prediction to features using Shapley values: each feature's contribution is its average marginal effect over all orderings, with absent features replaced by samples from a background distribution. A small permutation-based estimator:</p>
+  <CodeBlock language="python" filename="local_explain.py">{`import numpy as np
+from itertools import permutations
+
+def shapley_values(model_predict, x, background, n_perm=200, rng=None):
+    """Approximate Shapley values for one instance x.
+
+    model_predict: f(X) -> scores, X shape (n, d)
+    x:            (d,) the instance to explain
+    background:   (m, d) reference rows for 'absent' features
+    """
+    rng = rng or np.random.default_rng(0)
+    d = x.shape[0]
+    phi = np.zeros(d)
+
+    for _ in range(n_perm):
+        order = rng.permutation(d)
+        # start from a random background row (all features 'absent')
+        ref = background[rng.integers(len(background))].copy()
+        z = ref.copy()
+        prev = model_predict(z[None, :])[0]
+        for j in order:
+            z[j] = x[j]                  # turn feature j 'on'
+            cur = model_predict(z[None, :])[0]
+            phi[j] += cur - prev         # marginal contribution
+            prev = cur
+    phi /= n_perm
+    return phi   # sums to f(x) - E[f] in expectation
+
+# Local check: contributions reconstruct the gap from the baseline.
+# base = mean prediction over background; base + phi.sum() approx= f(x)
+`}</CodeBlock>
+  <p>Why this is descriptive, not causal:</p>
+  <ul>
+    <li>The attribution explains <strong>how the model used a feature</strong>, given the correlations in the background data. It does not tell you what happens in the real world if you intervene on that feature.</li>
+    <li>With <strong>correlated features</strong>, splitting credit between them is ambiguous, and the choice of background distribution (interventional vs conditional) changes the numbers materially.</li>
+    <li>A feature can get large attribution purely because it is a <strong>proxy</strong> for the true cause, so SHAP can highlight a discriminatory pathway without that feature being causal.</li>
+  </ul>
+  <p>For governance, SHAP is excellent for generating adverse-action reasons and surfacing suspicious dependencies, but causal claims require a causal model or an experiment, not a feature-attribution method.</p>
+</InterviewProblem>
+
+      </>
   );
 }

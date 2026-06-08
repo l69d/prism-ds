@@ -6,6 +6,7 @@ import { KeyIdea } from "@/components/content/key-idea";
 import { M, MB } from "@/components/content/math";
 import { CodeBlock } from "@/components/content/code-block";
 import { Quiz } from "@/components/content/quiz";
+import { InterviewProblem } from "@/components/content/interview-problem";
 
 export default function Lesson() {
   return (
@@ -82,6 +83,69 @@ print(classify("My card was declined but I was still billed."))`}</CodeBlock>
         { text: "It forces the output into a strict JSON schema that the model cannot violate.", why: "That describes structured output / constrained decoding, not chain-of-thought, which produces free-text reasoning." },
         { text: "It reduces the number of tokens generated, lowering latency and error.", why: "CoT increases token count and latency; the benefit comes from added reasoning steps, not from brevity." },
       ]} />
-    </>
+    <h2>Interview practice</h2>
+<InterviewProblem question="What is the difference between zero-shot, few-shot, and chain-of-thought prompting, and when would you reach for each?" difficulty="easy" tag="Conceptual">
+  <p><strong>Zero-shot</strong> gives only the instruction and trusts the model&apos;s pretrained priors: &quot;Classify the sentiment of this review.&quot; It is cheapest in tokens and best when the task is common and the output format is simple.</p>
+  <p><strong>Few-shot</strong> prepends a handful of input&rarr;output exemplars before the real query. The exemplars do two jobs: they pin down the <strong>output format</strong> and they disambiguate the <strong>task definition</strong> (e.g. your idiosyncratic label set). Reach for it when the model keeps drifting in format, when labels are non-obvious, or when you cannot fine-tune.</p>
+  <p><strong>Chain-of-thought (CoT)</strong> asks the model to produce intermediate reasoning before the answer (&quot;think step by step&quot;). It helps on multi-step problems &mdash; arithmetic, logic, multi-hop QA &mdash; because it lets the model spend more forward-pass compute and condition each token on its own prior reasoning.</p>
+  <ul>
+    <li>Heuristic: simple/common task &rarr; zero-shot; format or label ambiguity &rarr; few-shot; multi-step reasoning &rarr; CoT (often combined: few-shot CoT).</li>
+    <li>Costs: each exemplar and each reasoning token is paid for on <strong>every</strong> call, so CoT and large few-shot prompts trade latency and money for accuracy.</li>
+  </ul>
+</InterviewProblem>
+<InterviewProblem question="You need an LLM to return JSON your downstream parser can consume, but ~8% of responses are malformed (extra prose, trailing commas, hallucinated keys). How would you drive that failure rate down?" difficulty="medium" tag="Applied">
+  <p>Treat it as an engineering problem, not a prompting trick. Layer defenses from cheapest to strongest:</p>
+  <ul>
+    <li><strong>Constrain at decode time first.</strong> If the provider supports it, use a real structured-output mode (JSON schema / grammar-constrained or tool-call &quot;function&quot; arguments). This makes invalid JSON essentially impossible because the decoder can only emit tokens the grammar permits &mdash; far more reliable than asking nicely.</li>
+    <li><strong>Specify the schema explicitly</strong> with field names, types, and an example object. Few-shot examples of the exact JSON shape sharply reduce drift, especially for optional vs required fields.</li>
+    <li><strong>Suppress the prose.</strong> Tell it to output only the object, no markdown fences, no commentary. Set a stop sequence and, if needed, prefill the assistant turn with an opening brace so the model cannot start with chatter.</li>
+    <li><strong>Validate and repair.</strong> Parse with a schema validator (e.g. Pydantic). On failure, send the validator&apos;s error back in a short repair turn &mdash; one retry recovers most residual cases.</li>
+  </ul>
+  <p>Measure it: log a <strong>schema-valid rate</strong> on a held-out set and treat any regression as a release blocker. Lowering temperature also tightens format adherence at a small cost to diversity.</p>
+  <CodeBlock language="python" filename="structured_output.py">{`from pydantic import BaseModel, ValidationError
+import json
+
+class Review(BaseModel):
+    sentiment: str   # "positive" | "negative" | "neutral"
+    score: float     # 0..1
+
+def parse_or_repair(raw, ask_model):
+    try:
+        return Review.model_validate_json(raw)
+    except ValidationError as e:
+        # one cheap repair turn: hand the error back to the model
+        fixed = ask_model(
+            "Your JSON was invalid. Errors:\\n"
+            + str(e)
+            + "\\nReturn ONLY corrected JSON, no prose:\\n"
+            + raw
+        )
+        return Review.model_validate_json(fixed)
+`}</CodeBlock>
+</InterviewProblem>
+<InterviewProblem question="A teammate claims chain-of-thought always improves accuracy, so they enable it everywhere. Why is that wrong, and how would you decide where CoT actually pays off?" difficulty="medium" tag="Conceptual">
+  <p>CoT is not a free win &mdash; it is a compute-for-accuracy trade with real downsides:</p>
+  <ul>
+    <li><strong>No gain (or loss) on simple tasks.</strong> For lookup or single-step classification, extra reasoning adds latency and tokens while occasionally <strong>rationalizing</strong> a wrong answer it would otherwise have gotten right.</li>
+    <li><strong>The reasoning is not a faithful audit trail.</strong> The stated steps can be post-hoc and still land on a wrong answer, so do not treat CoT text as ground-truth explanation.</li>
+    <li><strong>Cost and latency scale with reasoning length</strong> on every call, which matters for high-QPS or budget-bound systems.</li>
+    <li><strong>Leakage risk.</strong> Verbose reasoning may surface intermediate content you did not want in the final output unless you separate &quot;thinking&quot; from the user-facing answer.</li>
+  </ul>
+  <p>Decide empirically: build an eval set, run with and without CoT, and compare accuracy <strong>and</strong> cost/latency. Keep CoT only where the accuracy lift clears your latency/cost budget &mdash; typically multi-step math, logic, planning, and multi-hop retrieval. For everything else, prefer zero- or few-shot. If you want the accuracy without the verbose output, consider self-consistency (sample several reasoning paths, majority-vote the answer) where the gain justifies the extra samples.</p>
+</InterviewProblem>
+<InterviewProblem question="You build a few-shot classifier with k exemplars in the prompt. Costs are rising. Given an input prompt of P tokens plus E tokens per exemplar and an output of O tokens, write the per-call token cost and reason about how to cut it without hurting accuracy." difficulty="hard" tag="Math">
+  <p>With <M>{"k"}</M> exemplars, every call processes the instruction, all exemplars, the query, and the generated output. If input and output are priced at <M>{"c_{in}"}</M> and <M>{"c_{out}"}</M> per token:</p>
+  <MB>{"\\text{cost} = c_{in}\\,(P + kE) + c_{out}\\,O"}</MB>
+  <p>The exemplar term <M>{"c_{in}\\,kE"}</M> is paid on <strong>every single call</strong>, so it dominates at scale. Levers, cheapest first:</p>
+  <ul>
+    <li><strong>Prompt caching.</strong> The instruction and exemplars are a fixed prefix. Caching it changes the recurring exemplar cost from full price to a small cached-read price <M>{"c_{cache}\\ll c_{in}"}</M>, giving roughly <M>{"c_{cache}\\,(P+kE) + c_{in}\\,Q + c_{out}\\,O"}</M> where <M>{"Q"}</M> is the per-call query length. This is usually the single biggest win and costs no accuracy.</li>
+    <li><strong>Shrink k.</strong> Few-shot accuracy typically rises fast for the first few exemplars then plateaus, so the marginal exemplar past the knee buys little. Sweep <M>{"k"}</M> on a held-out set and pick the smallest <M>{"k"}</M> within a tolerance of peak accuracy.</li>
+    <li><strong>Choose exemplars better.</strong> Diverse, hard, correctly-labeled exemplars beat many redundant easy ones, so a smaller curated set can match a larger random one.</li>
+    <li><strong>Distill.</strong> If volume is high and the task is stable, fine-tune a smaller model on the few-shot behavior &mdash; that folds the exemplars into the weights, dropping <M>{"kE"}</M> to zero per call.</li>
+  </ul>
+  <p>Numeric feel: at <M>{"P=200"}</M>, <M>{"E=80"}</M>, <M>{"k=10"}</M>, the exemplars are <M>{"800"}</M> of <M>{"1000"}</M> input tokens &mdash; 80% of input cost is the fixed prefix, which is exactly the part caching makes nearly free.</p>
+</InterviewProblem>
+
+      </>
   );
 }

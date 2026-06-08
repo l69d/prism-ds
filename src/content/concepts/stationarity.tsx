@@ -6,6 +6,7 @@ import { KeyIdea } from "@/components/content/key-idea";
 import { M, MB } from "@/components/content/math";
 import { CodeBlock } from "@/components/content/code-block";
 import { Quiz } from "@/components/content/quiz";
+import { InterviewProblem } from "@/components/content/interview-problem";
 
 export default function Lesson() {
   return (
@@ -62,6 +63,76 @@ print(is_stationary(np.diff(series)))      # True after differencing`}</CodeBloc
         { text: "You must difference the series at least three times.", why: "There is no basis for heavy differencing, and over-differencing harms the model." },
         { text: "The tests are broken and should be ignored.", why: "Disagreement is expected for borderline or trend-stationary series, not a malfunction." },
       ]} />
-    </>
+    <h2>Interview practice</h2>
+
+<InterviewProblem question="What does it mean for a time series to be stationary, and why do so many forecasting models require it?" difficulty="easy" tag="Conceptual">
+  <p>A series is <strong>strictly stationary</strong> if the joint distribution of any collection of points is invariant to time shifts. In practice we use the weaker, testable notion of <strong>weak (covariance) stationarity</strong>, which requires three things:</p>
+  <ul>
+    <li><strong>Constant mean</strong>: <M>{"\\mathbb{E}[X_t] = \\mu"}</M> for all <M>{"t"}</M>.</li>
+    <li><strong>Constant, finite variance</strong>: <M>{"\\operatorname{Var}(X_t) = \\sigma^2 < \\infty"}</M>.</li>
+    <li><strong>Autocovariance depends only on the lag</strong>, not on absolute time: <M>{"\\operatorname{Cov}(X_t, X_{t+h}) = \\gamma(h)"}</M>.</li>
+  </ul>
+  <p>Models like ARMA assume these properties so that parameters estimated on the past are valid in the future. If the mean drifts or the variance explodes, then a single set of coefficients cannot describe the whole series, the sample statistics do not converge to stable population values, and standard errors and forecast intervals become unreliable. Worse, two unrelated trending series will look highly correlated &mdash; the classic <strong>spurious regression</strong> problem &mdash; so regressions on non-stationary data can manufacture significance out of nothing.</p>
+</InterviewProblem>
+
+<InterviewProblem question="You run an ADF test and a KPSS test on the same series and get conflicting signals. How do you interpret that, and what are the null hypotheses?" difficulty="medium" tag="Applied">
+  <p>The key is that the two tests have <strong>opposite null hypotheses</strong>, so you should always read them together:</p>
+  <ul>
+    <li><strong>ADF (Augmented Dickey-Fuller)</strong>: null is &quot;there is a unit root&quot; (non-stationary). A small p-value lets you <strong>reject</strong> the unit root, i.e. evidence <strong>for</strong> stationarity.</li>
+    <li><strong>KPSS</strong>: null is &quot;the series is (trend-)stationary&quot;. A small p-value lets you reject stationarity, i.e. evidence <strong>against</strong> it.</li>
+  </ul>
+  <p>The four combinations:</p>
+  <ul>
+    <li><strong>ADF rejects + KPSS does not reject</strong> &rarr; both agree the series is stationary.</li>
+    <li><strong>ADF does not reject + KPSS rejects</strong> &rarr; both agree it is non-stationary; difference it.</li>
+    <li><strong>Both reject</strong> &rarr; conflicting; the series may be <strong>trend-stationary</strong>. Detrend (regress out a deterministic trend) rather than differencing.</li>
+    <li><strong>Neither rejects</strong> &rarr; the data are not informative enough; the tests lack power. Treat as inconclusive, inspect the plot and ACF, and lean on domain knowledge.</li>
+  </ul>
+  <p>Two practical cautions: ADF has notoriously low power against near-unit-root processes (a stationary AR(1) with <M>{"\\phi"}</M> close to 1 is hard to distinguish from a random walk), and both tests are sensitive to whether you include a constant and trend term in the specification. Always pick the deterministic terms to match what the plot shows.</p>
+</InterviewProblem>
+
+<InterviewProblem question="Show why a random walk is non-stationary, and explain why first-differencing fixes it." difficulty="medium" tag="Math">
+  <p>Take the random walk <M>{"X_t = X_{t-1} + \\varepsilon_t"}</M> with <M>{"X_0 = 0"}</M> and i.i.d. shocks <M>{"\\varepsilon_t"}</M> of mean 0 and variance <M>{"\\sigma^2"}</M>. Unrolling the recursion gives a cumulative sum of shocks:</p>
+  <MB>{"X_t = \\sum_{i=1}^{t} \\varepsilon_i"}</MB>
+  <p>The mean is fine (<M>{"\\mathbb{E}[X_t] = 0"}</M>), but the variance grows without bound in time:</p>
+  <MB>{"\\operatorname{Var}(X_t) = \\sum_{i=1}^{t} \\operatorname{Var}(\\varepsilon_i) = t\\,\\sigma^2"}</MB>
+  <p>Variance depends on <M>{"t"}</M>, so the constant-variance condition fails and the series is non-stationary (it has a <strong>unit root</strong>). Now first-difference:</p>
+  <MB>{"\\nabla X_t = X_t - X_{t-1} = \\varepsilon_t"}</MB>
+  <p>The differenced series is just white noise &mdash; constant mean 0, constant variance <M>{"\\sigma^2"}</M>, and zero autocovariance at all non-zero lags &mdash; which is stationary. This is exactly why the &quot;I&quot; (integrated) order in ARIMA counts how many times you difference to reach stationarity. A pitfall: if a series is only trend-stationary (deterministic trend plus stationary noise), differencing it works but <strong>over-differences</strong>, injecting a non-invertible MA unit root and inflating variance &mdash; detrending is the right tool there.</p>
+</InterviewProblem>
+
+<InterviewProblem question="Write code to test a series for stationarity, make it stationary, and verify the result." difficulty="hard" tag="Coding">
+  <p>A clean workflow runs both tests, applies a transformation if needed, and re-tests. We log-transform first to stabilize variance, then difference to remove a stochastic trend.</p>
+  <CodeBlock language="python" filename="stationarity.py">{`import numpy as np
+from statsmodels.tsa.stattools import adfuller, kpss
+
+def report(series, name):
+    # ADF: H0 = unit root (non-stationary). Small p => stationary.
+    adf_p = adfuller(series, autolag="AIC")[1]
+    # KPSS: H0 = stationary. Small p => non-stationary.
+    kpss_p = kpss(series, regression="c", nlags="auto")[1]
+    stationary = (adf_p < 0.05) and (kpss_p > 0.05)
+    print(f"{name}: ADF p={adf_p:.3f}  KPSS p={kpss_p:.3f}  "
+          f"-> {'STATIONARY' if stationary else 'NON-STATIONARY'}")
+    return stationary
+
+# Simulate a random walk with drift (non-stationary by construction)
+rng = np.random.default_rng(0)
+x = 100 + np.cumsum(rng.normal(0.5, 1.0, size=500))
+
+report(x, "raw")
+# Stabilize variance, then difference to kill the stochastic trend
+x_diff = np.diff(np.log(x))
+report(x_diff, "log-diff")
+
+# Guard against over-differencing: if the lag-1 autocorrelation of the
+# differenced series is strongly negative (around -0.5 or below), you have
+# likely differenced one time too many.
+acf1 = np.corrcoef(x_diff[:-1], x_diff[1:])[0, 1]
+print(f"lag-1 autocorr after differencing: {acf1:.3f}")`}</CodeBlock>
+  <p>Key points an interviewer listens for: (1) requiring <strong>both</strong> tests to agree before declaring stationarity, since their nulls are opposite; (2) log-transforming to handle multiplicative/variance growth before differencing handles the trend; and (3) explicitly checking for <strong>over-differencing</strong> via a large negative lag-1 autocorrelation, which signals you should difference one fewer time.</p>
+</InterviewProblem>
+
+      </>
   );
 }

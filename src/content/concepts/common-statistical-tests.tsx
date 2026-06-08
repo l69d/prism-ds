@@ -6,6 +6,7 @@ import { KeyIdea } from "@/components/content/key-idea";
 import { M, MB } from "@/components/content/math";
 import { CodeBlock } from "@/components/content/code-block";
 import { Quiz } from "@/components/content/quiz";
+import { InterviewProblem } from "@/components/content/interview-problem";
 
 export default function Lesson() {
   return (
@@ -66,6 +67,60 @@ h, p = stats.kruskal(g1, g2, g3)                    # vs one-way ANOVA
         { text: "A chi-square test of independence", why: "Chi-square is for categorical counts in a table, not for comparing means of a numeric outcome." },
         { text: "A Kruskal-Wallis test", why: "That is the non-parametric fallback; with normal, equal-variance data ANOVA is more powerful and is the natural first choice." },
       ]} />
-    </>
+    <h2>Interview practice</h2>
+<InterviewProblem question="You want to know whether average session time differs between two website variants in an A/B test. Walk through how you choose a test, and when a t-test is the wrong choice." difficulty="easy" tag="Conceptual">
+  <p>The default for comparing two group means is the <strong>two-sample t-test</strong>. Walking the decision tree:</p>
+  <ul>
+    <li><strong>Outcome type:</strong> session time is continuous, so a mean-comparison test is appropriate (not chi-square, which is for counts/categories).</li>
+    <li><strong>Number of groups:</strong> exactly two independent groups, so t-test rather than ANOVA.</li>
+    <li><strong>Independence:</strong> A/B users are randomized and distinct, so the two-sample (unpaired) version applies. If we measured the same users before and after, we&apos;d use a paired t-test.</li>
+    <li><strong>Variance:</strong> prefer <strong>Welch&apos;s t-test</strong> (unequal variances) by default; it costs almost nothing when variances are equal and protects you when they are not.</li>
+  </ul>
+  <p>When the t-test is the wrong choice: session time is usually <strong>right-skewed</strong> with a long tail. With small samples the t-test&apos;s normality assumption bites, and the mean is dominated by a few huge sessions. Better options are a <strong>Mann-Whitney U test</strong> (compares distributions/medians without normality) or a t-test on <M>{"\\log(\\text{time})"}</M>. With large <M>{"n"}</M> the CLT rescues the t-test even under skew, so the fix matters most for small samples.</p>
+</InterviewProblem>
+<InterviewProblem question="When do you use a chi-square test, and what is the difference between the goodness-of-fit and test-of-independence variants?" difficulty="medium" tag="Conceptual">
+  <p>Chi-square tests work on <strong>categorical counts</strong>, not means. Both variants compare observed counts <M>{"O_i"}</M> to expected counts <M>{"E_i"}</M> under a null hypothesis using the same statistic:</p>
+  <MB>{"\\chi^2 = \\sum_i \\frac{(O_i - E_i)^2}{E_i}"}</MB>
+  <ul>
+    <li><strong>Goodness-of-fit:</strong> one categorical variable. Does the observed distribution match a hypothesized one? Example: are dice rolls uniform? Expected counts come from the hypothesized proportions; degrees of freedom are <M>{"k-1"}</M> for <M>{"k"}</M> categories.</li>
+    <li><strong>Test of independence:</strong> two categorical variables in a contingency table. Are they associated? Example: is plan tier independent of churn? Expected counts are <M>{"E_{ij} = \\frac{(\\text{row}_i)(\\text{col}_j)}{N}"}</M>, and degrees of freedom are <M>{"(r-1)(c-1)"}</M>.</li>
+  </ul>
+  <p>Key caveats interviewers probe: the test is for counts (never percentages), it assumes independent observations, and the chi-square approximation breaks when expected cells are small. A common rule is that all <M>{"E_i \\ge 5"}</M>; for a 2x2 table with small expected counts, switch to <strong>Fisher&apos;s exact test</strong>.</p>
+</InterviewProblem>
+<InterviewProblem question="A teammate ran ANOVA across 4 treatment groups, got p = 0.03, and concluded group A beats group D. What is wrong, and what would you do instead?" difficulty="medium" tag="Applied">
+  <p>Two problems. First, a one-way <strong>ANOVA is an omnibus test</strong>: its null is that <em>all</em> group means are equal. A significant result tells you at least one group differs, but <strong>not which pair</strong>. Concluding A beats D specifically is not supported by the F-test alone.</p>
+  <p>Second, naively running all <M>{"\\binom{4}{2}=6"}</M> pairwise t-tests inflates the family-wise error rate. With 6 independent tests at <M>{"\\alpha=0.05"}</M>:</p>
+  <MB>{"P(\\text{at least one false positive}) = 1 - (1-0.05)^6 \\approx 0.26"}</MB>
+  <p>What I&apos;d do: follow the significant ANOVA with a <strong>post-hoc test that controls for multiplicity</strong>, such as <strong>Tukey&apos;s HSD</strong> for all pairwise comparisons, or Bonferroni/Holm correction if only a few planned comparisons matter. I&apos;d also check ANOVA&apos;s assumptions (roughly normal residuals, equal variances); if variances differ, use Welch&apos;s ANOVA, and if normality is badly violated use the non-parametric <strong>Kruskal-Wallis test</strong> followed by Dunn&apos;s test.</p>
+</InterviewProblem>
+<InterviewProblem question="Implement a decision helper that recommends a test given the outcome type, number of groups, and whether samples are paired. Show how a normality check changes the recommendation." difficulty="hard" tag="Coding">
+  <p>The core logic encodes the decision tree: categorical outcomes go to chi-square; continuous outcomes branch on the number of groups and the pairing/normality flags.</p>
+  <CodeBlock language="python" filename="choose_test.py">{`from scipy import stats
+
+def recommend_test(outcome, n_groups, paired=False, normal=True):
+    """outcome: 'categorical' or 'continuous'."""
+    if outcome == "categorical":
+        return "chi-square (independence or goodness-of-fit)"
+    # continuous outcome from here
+    if n_groups == 2:
+        if paired:
+            return "paired t-test" if normal else "Wilcoxon signed-rank"
+        return "Welch's t-test" if normal else "Mann-Whitney U"
+    # 3+ groups
+    return "one-way ANOVA + Tukey HSD" if normal else "Kruskal-Wallis + Dunn"
+
+# Let the data decide 'normal' via Shapiro-Wilk on each group
+def is_normal(*groups, alpha=0.05):
+    # small p => reject normality
+    return all(stats.shapiro(g).pvalue > alpha for g in groups)
+
+a = [12.1, 11.8, 13.0, 12.5, 200.0]   # one huge outlier => skew
+b = [10.2, 9.9, 11.1, 10.7, 10.0]
+print(recommend_test("continuous", 2, paired=False, normal=is_normal(a, b)))
+# -> Mann-Whitney U  (Shapiro rejects normality for group a)`}</CodeBlock>
+  <p>Points to make in the interview: <strong>let assumptions drive the branch</strong> rather than always defaulting to a t-test. Shapiro-Wilk is fine for small samples but becomes hypersensitive at large <M>{"n"}</M> (it will flag trivial non-normality), so for big samples lean on the CLT and on plots/effect sizes instead of a normality p-value. Always pair the chosen test with an <strong>effect size and confidence interval</strong>, since statistical significance alone does not establish practical importance.</p>
+</InterviewProblem>
+
+      </>
   );
 }

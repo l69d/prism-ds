@@ -6,6 +6,7 @@ import { KeyIdea } from "@/components/content/key-idea";
 import { M, MB } from "@/components/content/math";
 import { CodeBlock } from "@/components/content/code-block";
 import { Quiz } from "@/components/content/quiz";
+import { InterviewProblem } from "@/components/content/interview-problem";
 
 export default function Lesson() {
   return (
@@ -71,6 +72,75 @@ print(out)`}</CodeBlock>
         { text: "MAR, because conditioning on the other observed columns fully removes the bias.", why: "MAR requires missingness to depend only on observed values; here it depends on the missing income itself, so other columns cannot fully correct it." },
         { text: "It does not matter; mean imputation will fix it regardless of mechanism.", why: "Mean imputation shrinks variance and, under MNAR, systematically biases the income estimate toward the low end." },
       ]} />
-    </>
+    <h2>Interview practice</h2>
+<InterviewProblem question="Explain MCAR, MAR, and MNAR. Why does the distinction matter for whether your imputation biases the model?" difficulty="easy" tag="Conceptual">
+  <p>The three mechanisms describe how the probability of a value being missing relates to the data:</p>
+  <ul>
+    <li><strong>MCAR (Missing Completely At Random):</strong> missingness is independent of both observed and unobserved values. A lab machine randomly drops readings. Dropping rows (complete-case analysis) is unbiased here, just less efficient.</li>
+    <li><strong>MAR (Missing At Random):</strong> missingness depends only on <strong>observed</strong> data. Income is more often missing for younger respondents, but age is recorded. Conditioning on the observed variables, the missingness is random, so model-based imputation (e.g. regress income on age) recovers an unbiased estimate.</li>
+    <li><strong>MNAR (Missing Not At Random):</strong> missingness depends on the <strong>unobserved</strong> value itself. High earners refuse to report income. No imputation from observed columns alone can fix this without a model of the missingness mechanism.</li>
+  </ul>
+  <p>The distinction matters because it determines bias. Under MCAR you can drop or impute freely. Under MAR you must impute <strong>conditional on the observed predictors</strong> or you bias estimates. Under MNAR, naive imputation (mean, regression) systematically biases the model because the missing values differ from the observed ones in a way you cannot see from the data. Crucially, MCAR is testable (compare distributions of complete vs incomplete cases), MAR is an assumption you cannot verify from the data alone, and MNAR can only be addressed with domain knowledge or sensitivity analysis.</p>
+</InterviewProblem>
+<InterviewProblem question="A teammate fills missing values with the column mean. What goes wrong, and what would you do instead?" difficulty="medium" tag="Applied">
+  <p>Mean imputation has three well-known failure modes:</p>
+  <ul>
+    <li><strong>It shrinks variance.</strong> Every imputed point sits exactly at the mean, so the column&apos;s variance is understated. If <M>{"p"}</M> is the fraction missing, the imputed-sample variance is deflated by roughly a factor of <M>{"(1-p)"}</M>, which makes standard errors too small and confidence intervals too narrow.</li>
+    <li><strong>It distorts covariance.</strong> Imputed rows pull correlations toward zero because the filled values carry no relationship to the other features, biasing any downstream regression coefficients.</li>
+    <li><strong>It ignores the mechanism.</strong> Under MAR, the conditional mean given other features is what you want, not the unconditional mean.</li>
+  </ul>
+  <p>Better options, in roughly increasing sophistication:</p>
+  <ul>
+    <li>Add a <strong>missingness indicator</strong> column alongside any imputation, so a tree or linear model can learn that &quot;was missing&quot; is itself predictive (often it is, especially under MNAR).</li>
+    <li>Use <strong>model-based / iterative imputation</strong> (MICE / <M>{"\\texttt{IterativeImputer}"}</M>, or KNN) that predicts each missing value from the other columns, preserving conditional relationships.</li>
+    <li>Use <strong>multiple imputation</strong>: generate several imputed datasets, fit the model on each, and pool, so the extra uncertainty from imputation is propagated into your standard errors instead of being pretended away.</li>
+    <li>For tree models like XGBoost/LightGBM, you can often leave NaNs in place; they learn a default split direction for missing values natively.</li>
+  </ul>
+  <p>One critical pipeline point: fit the imputer on the <strong>training fold only</strong> and apply it to validation/test, otherwise the test-set means leak into training and you overstate performance.</p>
+</InterviewProblem>
+<InterviewProblem question="Show that mean imputation deflates the estimated variance, and quantify by how much." difficulty="hard" tag="Math">
+  <p>Take a column with <M>{"n"}</M> rows, of which <M>{"m"}</M> are observed and <M>{"n-m"}</M> are missing. Let the observed values have sample mean <M>{"\\bar{x}_{obs}"}</M> and we fill all missing entries with <M>{"\\bar{x}_{obs}"}</M>. The completed column has the same mean <M>{"\\bar{x}_{obs}"}</M> (the fills are at the mean, so they do not move it). Its variance, using the population-style divisor, is:</p>
+  <MB>{"s^2_{imp} = \\frac{1}{n}\\left[\\sum_{i \\in obs}(x_i - \\bar{x}_{obs})^2 + \\sum_{i \\in miss}(\\bar{x}_{obs} - \\bar{x}_{obs})^2\\right]"}</MB>
+  <p>The second sum is identically zero, so:</p>
+  <MB>{"s^2_{imp} = \\frac{1}{n}\\sum_{i \\in obs}(x_i - \\bar{x}_{obs})^2 = \\frac{m}{n}\\, s^2_{obs}"}</MB>
+  <p>where <M>{"s^2_{obs}"}</M> is the variance computed over just the observed values. So the imputed variance is the observed variance scaled by the observed fraction <M>{"m/n = (1-p)"}</M> for missing fraction <M>{"p"}</M>. With 30% missing, you keep only 70% of the true spread, a systematic underestimate that flows straight into deflated standard errors and overconfident inference.</p>
+</InterviewProblem>
+<InterviewProblem question="Implement a leak-free imputation pipeline that also adds missingness indicators, and explain why it is robust." difficulty="medium" tag="Coding">
+  <p>The key ideas: fit the imputer inside a <M>{"\\texttt{Pipeline}"}</M> so it learns statistics only from training folds during cross-validation, and keep a binary flag for each imputed column so the model can exploit informative missingness.</p>
+  <CodeBlock language="python" filename="impute_pipeline.py">{`import numpy as np
+from sklearn.pipeline import Pipeline
+from sklearn.impute import SimpleImputer
+from sklearn.compose import ColumnTransformer
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import cross_val_score
+
+# add_indicator=True appends a binary "was missing" column per feature
+num_imputer = SimpleImputer(strategy="median", add_indicator=True)
+
+pre = ColumnTransformer(
+    transformers=[("num", num_imputer, num_cols)],
+    remainder="passthrough",
+)
+
+pipe = Pipeline([
+    ("pre", pre),
+    ("clf", RandomForestClassifier(n_estimators=300, random_state=0)),
+])
+
+# The imputer is re-fit on each training fold only, so test-fold
+# statistics never leak into the medians used for imputation.
+scores = cross_val_score(pipe, X, y, cv=5, scoring="roc_auc")
+print(f"CV AUC: {scores.mean():.3f} +/- {scores.std():.3f}")
+`}</CodeBlock>
+  <p>Why it is robust:</p>
+  <ul>
+    <li><strong>No leakage:</strong> because the imputer lives in the pipeline, <M>{"\\texttt{cross\\_val\\_score}"}</M> refits it per fold; the median used to fill the held-out fold comes only from that fold&apos;s training rows.</li>
+    <li><strong>Median over mean:</strong> robust to skew and outliers, which dominate many real columns (e.g. income, latency).</li>
+    <li><strong>Indicators:</strong> if missingness is informative (common under MNAR), the model can use the flag directly instead of being misled by the filled value.</li>
+    <li><strong>Reproducibility:</strong> the same fitted object transforms train and serve-time data identically, avoiding train/serve skew.</li>
+  </ul>
+</InterviewProblem>
+
+      </>
   );
 }

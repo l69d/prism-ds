@@ -3,9 +3,11 @@
 import { Basic, Advanced, MoreDepth } from "@/components/content/tiered";
 import { Callout } from "@/components/content/callout";
 import { KeyIdea } from "@/components/content/key-idea";
-import { M } from "@/components/content/math";
+import { M, MB } from "@/components/content/math";
 import { Quiz } from "@/components/content/quiz";
 import { HypothesisTestViz } from "@/components/viz/hypothesis-test";
+import { InterviewProblem } from "@/components/content/interview-problem";
+import { CodeBlock } from "@/components/content/code-block";
 
 export default function HypothesisTestingContent() {
   return (
@@ -84,6 +86,81 @@ export default function HypothesisTestingContent() {
           { text: "There's a 97% chance the alternative is true.", why: "The p-value is not the probability of any hypothesis." },
         ]}
       />
-    </>
+    <h2>Interview practice</h2>
+<InterviewProblem question="A teammate says 'the p-value is 0.03, so there's a 97% chance our new ranking model is better.' What's wrong with that statement?" difficulty="easy" tag="Conceptual">
+  <p>The p-value is <strong>not</strong> the probability that a hypothesis is true. It is computed <em>assuming the null is true</em>: it is the probability of seeing data at least as extreme as what we observed, given <M>{"H_0"}</M>.</p>
+  <p>Formally, with test statistic <M>{"T"}</M> and observed value <M>{"t_{obs}"}</M> for a one-sided test:</p>
+  <MB>{"p = P(T \\geq t_{obs} \\mid H_0)"}</MB>
+  <p>So <M>{"p = 0.03"}</M> means: <em>if the new model were truly no better</em>, we&apos;d see a result this favorable only 3% of the time. The five things a p-value is NOT:</p>
+  <ul>
+    <li>NOT <M>{"P(H_0 \\mid \\text{data})"}</M> &mdash; that requires a prior and Bayes&apos; rule.</li>
+    <li>NOT the probability the result was due to chance.</li>
+    <li>NOT the probability of making a wrong decision.</li>
+    <li>NOT a measure of effect size or practical importance.</li>
+    <li>NOT replicable as-is &mdash; a second study won&apos;t give the same p.</li>
+  </ul>
+  <p>The correct framing: &quot;under the assumption of no improvement, this data would be fairly surprising.&quot; To talk about the probability the model is better, you need a Bayesian posterior, not a p-value.</p>
+</InterviewProblem>
+<InterviewProblem question="Define Type I error, Type II error, and power. If you cut your significance level from 0.05 to 0.01 with everything else fixed, what happens to each?" difficulty="medium" tag="Conceptual">
+  <p>Frame the four outcomes against the truth:</p>
+  <ul>
+    <li><strong>Type I error</strong> (false positive): rejecting <M>{"H_0"}</M> when it is true. Its rate is <M>{"\\alpha"}</M>.</li>
+    <li><strong>Type II error</strong> (false negative): failing to reject <M>{"H_0"}</M> when it is false. Its rate is <M>{"\\beta"}</M>.</li>
+    <li><strong>Power</strong> <M>{"= 1 - \\beta"}</M>: the probability of correctly detecting a real effect.</li>
+  </ul>
+  <p>Lowering <M>{"\\alpha"}</M> from 0.05 to 0.01 raises the bar for rejection, so:</p>
+  <ul>
+    <li>Type I error rate <strong>drops</strong> (that&apos;s the definition of <M>{"\\alpha"}</M>).</li>
+    <li>Type II error rate <strong>rises</strong> &mdash; you reject less often, so you miss more true effects.</li>
+    <li>Power <strong>falls</strong>, since power <M>{"= 1 - \\beta"}</M>.</li>
+  </ul>
+  <p>There is a fundamental tradeoff between <M>{"\\alpha"}</M> and <M>{"\\beta"}</M> at fixed sample size. The only way to push both down at once is to increase <M>{"n"}</M> (or the effect size, or reduce variance). This is exactly why power analysis sizes experiments <em>before</em> running them.</p>
+</InterviewProblem>
+<InterviewProblem question="You run an A/B test on a 0.1% baseline conversion rate. With 20,000 users per arm you get p = 0.001 for a lift from 0.10% to 0.12%. The PM wants to ship. What do you say?" difficulty="hard" tag="Applied">
+  <p>This is the classic &quot;significance is not importance&quot; trap. Two separate questions: is the effect real, and is it worth shipping?</p>
+  <p><strong>Statistical significance.</strong> A tiny p only says the lift is unlikely under <M>{"H_0"}</M>. With large <M>{"n"}</M>, even microscopic differences become significant because the standard error shrinks like <M>{"1/\\sqrt{n}"}</M>:</p>
+  <MB>{"SE = \\sqrt{\\frac{p_A(1-p_A)}{n} + \\frac{p_B(1-p_B)}{n}}"}</MB>
+  <p><strong>Practical importance.</strong> The absolute lift is 0.02 percentage points &mdash; a 20% relative gain, but on a tiny base. Report a <strong>confidence interval on the effect</strong>, not just p, and weigh it against costs: engineering, latency, novelty effects, and whether the metric is even the true business objective.</p>
+  <p>Other red flags I&apos;d check before shipping:</p>
+  <ul>
+    <li>With a 0.1% base, conversion counts are tiny (~20 per arm) &mdash; verify the normal approximation holds or use an exact test.</li>
+    <li>Was this the only metric tested? Multiple comparisons inflate false positives; correct with Bonferroni or Benjamini&ndash;Hochberg.</li>
+    <li>Did the test stop the moment it hit significance? Peeking inflates Type I error; use a pre-registered horizon or sequential testing.</li>
+    <li>Are guardrail metrics (revenue, retention) neutral?</li>
+  </ul>
+  <p>My answer: &quot;Significant, yes; meaningful, maybe. Show me the CI on absolute lift and the impact on the headline business metric before we commit.&quot;</p>
+</InterviewProblem>
+<InterviewProblem question="Write a permutation test from scratch to compare two groups' means without assuming normality, and explain what the resulting p-value means." difficulty="medium" tag="Coding">
+  <p>A permutation test builds the null distribution empirically: if <M>{"H_0"}</M> (no difference) holds, group labels are exchangeable, so we shuffle them many times and see how often the shuffled difference is as extreme as the observed one.</p>
+  <CodeBlock language="python" filename="permutation_test.py">{`import numpy as np
+
+def permutation_test(a, b, n_perm=10_000, seed=0):
+    rng = np.random.default_rng(seed)
+    a, b = np.asarray(a), np.asarray(b)
+    observed = a.mean() - b.mean()
+
+    pooled = np.concatenate([a, b])
+    n_a = len(a)
+    count = 0
+    for _ in range(n_perm):
+        rng.shuffle(pooled)
+        diff = pooled[:n_a].mean() - pooled[n_a:].mean()
+        # two-sided: count shuffles at least as extreme
+        if abs(diff) >= abs(observed):
+            count += 1
+
+    # +1 in num & denom: never report p = 0 (the observed
+    # labeling is itself a valid permutation)
+    p_value = (count + 1) / (n_perm + 1)
+    return observed, p_value
+
+control = [0.10, 0.12, 0.09, 0.11, 0.13]
+treat   = [0.14, 0.15, 0.13, 0.16, 0.12]
+obs, p = permutation_test(control, treat)
+print(f"observed diff = {obs:.4f}, p = {p:.4f}")`}</CodeBlock>
+  <p>The p-value is the fraction of random relabelings whose mean difference is at least as extreme as the observed one. It directly estimates <M>{"P(|T| \\geq |t_{obs}| \\mid H_0)"}</M> with no distributional assumptions &mdash; that&apos;s the appeal versus a t-test on small or skewed samples. Adding 1 to numerator and denominator keeps p strictly positive and gives a valid (slightly conservative) test.</p>
+</InterviewProblem>
+
+      </>
   );
 }

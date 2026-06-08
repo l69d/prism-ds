@@ -6,6 +6,7 @@ import { KeyIdea } from "@/components/content/key-idea";
 import { M, MB } from "@/components/content/math";
 import { CodeBlock } from "@/components/content/code-block";
 import { Quiz } from "@/components/content/quiz";
+import { InterviewProblem } from "@/components/content/interview-problem";
 
 export default function Lesson() {
   return (
@@ -53,6 +54,70 @@ print(choose_chart("comparison"))  # bar chart (length on a common baseline)`}</
         { text: "A scatter plot of revenue vs. month index", why: "Scatter answers relationship between two variables; it omits the connecting line that makes a temporal trend legible." },
         { text: "A box plot of all monthly values", why: "A box plot summarizes a distribution and discards the time order entirely." },
       ]} />
-    </>
+    <h2>Interview practice</h2>
+<InterviewProblem question="You have a single numeric column (say, customer ages). A teammate makes a pie chart of it. What went wrong, and what would you use instead?" difficulty="easy" tag="Conceptual">
+  <p>A pie chart encodes <strong>parts of a whole</strong> across a few categories. Age is a continuous variable, so there is no natural set of slices, and binning it into a pie destroys the shape of the data (skew, modes, outliers).</p>
+  <p>The question being asked is about a <strong>distribution</strong>, so reach for:</p>
+  <ul>
+    <li><strong>Histogram</strong> &mdash; shows where mass concentrates and whether the data is multimodal.</li>
+    <li><strong>Box plot or violin</strong> &mdash; compact summary of median, spread, and outliers; great when comparing the distribution across groups.</li>
+    <li><strong>ECDF</strong> &mdash; reads off quantiles directly and is robust to bin-width choices.</li>
+  </ul>
+  <p>The general rule: first name the <strong>question</strong> (comparison, distribution, relationship, or trend), then pick the chart family that answers it. Pie charts only fit the narrow &quot;composition of one whole into a handful of parts&quot; case.</p>
+</InterviewProblem>
+<InterviewProblem question="A PM wants to show how monthly revenue changed over three years and asks for a bar chart. When is a line chart the better call, and why?" difficulty="medium" tag="Applied">
+  <p>Both can show the values, but they signal different things about the data&apos;s structure.</p>
+  <ul>
+    <li><strong>Line chart</strong> is right here. Time is an ordered, continuous axis, and the line connects adjacent months so the eye reads the <strong>trend</strong> &mdash; slope, momentum, seasonality &mdash; which is exactly the &quot;how did it change&quot; question.</li>
+    <li><strong>Bar chart</strong> emphasizes discrete, independent magnitudes you compare side by side (revenue by region this quarter). With 36 monthly bars the chart gets noisy and the connection between consecutive points is lost.</li>
+  </ul>
+  <p>Practical refinements:</p>
+  <ul>
+    <li>If they really care about month-to-month change rather than level, plot the <strong>delta</strong> or percent change &mdash; that may justify bars (including diverging bars around zero).</li>
+    <li>Don&apos;t force the y-axis to start at zero for a line trend if it crushes the signal; do start bars at zero, since bar length encodes magnitude and a truncated axis is misleading.</li>
+    <li>For strong seasonality, a 12-month rolling average overlaid on the raw line separates trend from cycle.</li>
+  </ul>
+</InterviewProblem>
+<InterviewProblem question="You want to visualize the relationship between ad spend and conversions across 2 million rows. A scatter plot is a solid mush of overlapping points. How do you fix the chart, and what would make you switch to a different chart entirely?" difficulty="hard" tag="Case">
+  <p>The scatter plot is the correct <strong>family</strong> &mdash; you&apos;re asking a relationship question between two numeric variables &mdash; but at this scale <strong>overplotting</strong> hides density: a region with a thousand points looks the same as one with ten.</p>
+  <p>Fixes that keep the scatter intent:</p>
+  <ul>
+    <li><strong>Alpha blending</strong> (low opacity) so overlapping points accumulate into darker, denser regions.</li>
+    <li><strong>2D binning</strong> &mdash; hexbin or a 2D histogram &mdash; which maps point density to color and scales to millions of rows.</li>
+    <li><strong>Subsampling</strong> a random few thousand points, often enough to read the shape.</li>
+    <li>Color by a <strong>local density estimate</strong> (KDE) and add a fitted trend line or LOWESS to summarize the relationship.</li>
+  </ul>
+  <p>Switch charts entirely when the underlying question changes:</p>
+  <ul>
+    <li>If one variable is really categorical (spend bucket), the question becomes &quot;compare conversion distributions across buckets&quot; &mdash; use grouped box/violin plots.</li>
+    <li>If you only care about the summary trend, a <strong>binned line</strong> (mean conversions per spend decile with confidence bands) is far more legible than 2M dots.</li>
+  </ul>
+  <CodeBlock language="python" filename="density_chart.py">{`import numpy as np
+import matplotlib.pyplot as plt
+
+# 2M-row relationship: hexbin beats a raw scatter when points overlap
+spend = np.random.gamma(2.0, 50.0, size=2_000_000)
+conv  = 0.4 * spend + np.random.normal(0, 30, size=spend.size)
+
+fig, ax = plt.subplots()
+hb = ax.hexbin(spend, conv, gridsize=60, cmap="viridis", bins="log")
+fig.colorbar(hb, label="log10(count)")  # density, not just points
+
+# Summarize the trend: mean conv per spend decile
+deciles = np.quantile(spend, np.linspace(0, 1, 11))
+centers = 0.5 * (deciles[:-1] + deciles[1:])
+means = [conv[(spend >= lo) & (spend < hi)].mean()
+         for lo, hi in zip(deciles[:-1], deciles[1:])]
+ax.plot(centers, means, color="white", marker="o", label="decile mean")
+ax.set_xlabel("ad spend"); ax.set_ylabel("conversions"); ax.legend()`}</CodeBlock>
+</InterviewProblem>
+<InterviewProblem question="Your model outputs a 12x12 confusion matrix and you must show it to stakeholders. Why is a heatmap usually the right encoding, and what is the most common mistake people make with it?" difficulty="medium" tag="Conceptual">
+  <p>A confusion matrix is a 2D table of counts indexed by (true class, predicted class). The question is &quot;where does the model confuse classes?&quot; &mdash; a <strong>relationship over a grid</strong>. A heatmap maps each cell&apos;s value to color, so off-diagonal hot spots immediately reveal which class pairs get mixed up. Bars or lines can&apos;t show a 12x12 grid compactly.</p>
+  <p>The most common mistake is showing <strong>raw counts</strong> when classes are imbalanced: a populous class lights up the whole map and a rare-but-badly-misclassified class stays invisible. Fix it by <strong>normalizing each row</strong> so cell <M>{"(i,j)"}</M> shows <M>{"P(\\hat{y}=j \\mid y=i)"}</M>:</p>
+  <MB>{"C^{\\text{norm}}_{ij} = \\frac{C_{ij}}{\\sum_{k} C_{ik}}"}</MB>
+  <p>Now every row sums to 1, the diagonal reads as per-class recall, and color is comparable across classes regardless of support. Other good practices: use a <strong>sequential</strong> (not rainbow) colormap so magnitude is monotonic, and annotate cells with the numeric value for precise reading.</p>
+</InterviewProblem>
+
+      </>
   );
 }

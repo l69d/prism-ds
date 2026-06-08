@@ -6,6 +6,7 @@ import { KeyIdea } from "@/components/content/key-idea";
 import { M, MB } from "@/components/content/math";
 import { CodeBlock } from "@/components/content/code-block";
 import { Quiz } from "@/components/content/quiz";
+import { InterviewProblem } from "@/components/content/interview-problem";
 
 export default function Lesson() {
   return (
@@ -66,6 +67,67 @@ plt.show()`}</CodeBlock>
         { text: "A bubble chart sized by revenue", why: "Area is decoded with an exponent near 0.7, so readers systematically underestimate larger values." },
         { text: "A single-hue heatmap colored by revenue", why: "Color magnitude is read imprecisely; it is good for patterns, not exact comparisons." },
       ]} />
-    </>
+    <h2>Interview practice</h2>
+<InterviewProblem question="Why are position and length better visual encodings than color hue or area for quantitative comparison?" difficulty="easy" tag="Conceptual">
+  <p>Cleveland and McGill ranked elementary perceptual tasks by how accurately people decode them. The ordering, most to least accurate, is roughly:</p>
+  <ul>
+    <li><strong>Position</strong> on a common scale (e.g. dots aligned on one axis).</li>
+    <li><strong>Length</strong> and position on non-aligned scales (bar charts).</li>
+    <li><strong>Angle / slope</strong> (pie slices, line steepness).</li>
+    <li><strong>Area</strong> (bubble size).</li>
+    <li><strong>Volume, color saturation / hue</strong> (heatmaps, color-coded magnitude).</li>
+  </ul>
+  <p>People judge position to within a few percent, but estimate area with large systematic error: doubling a value often looks like a much smaller increase because the eye underweights area. Color hue is worse still because it is not perceptually ordered, your brain has no innate sense that orange is &quot;more than&quot; green. So for a quantitative comparison that must be read precisely, map the value to position or length (a dot plot or bar chart) and reserve color and area for categorical labels or secondary, approximate dimensions.</p>
+</InterviewProblem>
+<InterviewProblem question="A stakeholder shows a 3D pie chart of model error split across 7 customer segments and asks which segment is worst. Critique the chart and propose a better one." difficulty="medium" tag="Applied">
+  <p>The 3D pie is close to the worst possible choice for this question. Problems:</p>
+  <ul>
+    <li><strong>Angle and area are weak encodings.</strong> Comparing 7 wedges by angle is far less accurate than comparing 7 bars by length, and viewers cannot reliably rank slices that are close in size.</li>
+    <li><strong>3D perspective distorts magnitude.</strong> The tilt makes front slices look bigger than rear slices of equal value, so the &quot;worst&quot; segment may just be the one drawn in front. This is pure chartjunk that actively misleads.</li>
+    <li><strong>No natural ordering.</strong> Pie slices around a circle have no sorted reading order, so the eye cannot scan from worst to best.</li>
+  </ul>
+  <p>Better: a <strong>horizontal bar chart sorted descending by error</strong>, one bar per segment, value labels at the bar ends. This uses length on a common baseline (the top perceptual encoding), the sort answers &quot;which is worst&quot; in one glance, and labels let the reader recover exact numbers. If you must show share-of-total as well, a sorted bar still beats a pie because it preserves both ranking and magnitude. Reserve pie charts for the rare case of 2-3 parts of an obvious whole.</p>
+</InterviewProblem>
+<InterviewProblem question="Define Tufte's data-ink ratio and explain why maximizing it blindly can hurt a chart." difficulty="medium" tag="Conceptual">
+  <p>The data-ink ratio is the fraction of a graphic&apos;s ink (pixels) devoted to encoding actual data, versus decoration, redundant gridlines, heavy borders, and backgrounds:</p>
+  <MB>{"\\text{data-ink ratio} = \\frac{\\text{ink used to represent data}}{\\text{total ink used in the graphic}}"}</MB>
+  <p>Tufte&apos;s prescription is to maximize it: erase non-data ink and redundant data ink until removing more would lose information. This kills gradient fills, 3D bevels, and dark gridlines, leaving the data itself in focus.</p>
+  <p>But pushed to the extreme it backfires. A small amount of &quot;redundant&quot; ink improves comprehension:</p>
+  <ul>
+    <li>Faint gridlines and reference lines let readers recover values and anchor comparisons.</li>
+    <li>Direct labels on lines remove the cognitive cost of bouncing to a legend.</li>
+    <li>Light shading or a benchmark band can encode context (a target, a normal range) that the bare data points cannot.</li>
+  </ul>
+  <p>So the real objective is not the maximum ratio but the maximum <strong>information transmitted per unit of reader effort</strong>. Remove ink that does not help decoding; keep ink that does, even when it is technically redundant.</p>
+</InterviewProblem>
+<InterviewProblem question="You must color-code a choropleth of disease incidence rates for a public dashboard. How do you choose the color scale, and what mistakes would you avoid?" difficulty="hard" tag="Case">
+  <p>The key insight is that the data is <strong>sequential</strong> (a single magnitude from low to high), so the color scale must also be sequential and, critically, <strong>perceptually uniform</strong>: equal steps in the data should look like equal steps in color.</p>
+  <ul>
+    <li><strong>Use a perceptually uniform sequential scale</strong> such as viridis, magma, or a single-hue light-to-dark ramp. These vary monotonically in lightness, so the ordering survives grayscale printing and reads correctly to most color-vision-deficient viewers.</li>
+    <li><strong>Avoid the rainbow / jet scale.</strong> It is not monotonic in lightness, so it manufactures false boundaries (the cyan-to-green band looks like a sharp edge) and hides real gradients (the yellow region looks uniform). It also fails for colorblind readers.</li>
+    <li><strong>Do not use a diverging scale</strong> (red-white-blue) unless there is a meaningful midpoint such as deviation from a national average. Forcing a diverging palette on plain incidence implies a center that does not exist.</li>
+    <li><strong>Normalize the quantity.</strong> Map incidence <M>{"\\textit{rate}"}</M> (cases per 100k), not raw counts, or the map just reproduces population density.</li>
+    <li><strong>Choose classing carefully.</strong> Equal-interval bins are distorted by skew and outliers; quantile bins equalize area but can hide magnitude. State the binning and consider a continuous scale with a clear legend.</li>
+    <li><strong>Account for the area-perception bias.</strong> Large rural regions dominate the visual field even at low rates; pair the choropleth with a population-weighted view (e.g. a cartogram or a bar chart) so geography does not overstate importance.</li>
+  </ul>
+  <p>In code, a defensible default with matplotlib:</p>
+  <CodeBlock language="python" filename="choropleth.py">{`import matplotlib.pyplot as plt
+
+# rate = cases per 100k, already computed per region
+gdf.plot(
+    column="rate",
+    cmap="viridis",        # perceptually uniform, colorblind-safe, prints in grayscale
+    scheme="quantiles",    # equal-count bins; state this in the caption
+    k=5,
+    legend=True,
+    edgecolor="white",     # thin separators, not heavy borders (high data-ink ratio)
+    linewidth=0.3,
+)
+plt.title("Disease incidence (cases per 100k)")
+plt.axis("off")          # map frame ticks carry no information here
+plt.show()`}</CodeBlock>
+</InterviewProblem>
+
+      </>
   );
 }

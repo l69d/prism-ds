@@ -4,6 +4,8 @@ import { Basic, Advanced, MoreDepth } from "@/components/content/tiered";
 import { Callout } from "@/components/content/callout";
 import { KeyIdea } from "@/components/content/key-idea";
 import { Quiz } from "@/components/content/quiz";
+import { InterviewProblem } from "@/components/content/interview-problem";
+import { M, MB } from "@/components/content/math";
 
 export default function Lesson() {
   return (
@@ -45,6 +47,54 @@ export default function Lesson() {
         { text: "Data preparation — they had too many features", why: "Feature count does not explain a model that scores well offline yet fails to change the outcome." },
         { text: "Deployment — the server was too slow", why: "Latency would cause outages or errors, not a model that runs but fails to reduce churn." },
       ]} />
-    </>
+    <h2>Interview practice</h2>
+<InterviewProblem question="Walk me through the CRISP-DM lifecycle. Where do most projects actually fail, and why?" difficulty="easy" tag="Conceptual">
+  <p>CRISP-DM is the canonical loop that maps onto the <strong>question &rarr; data &rarr; model &rarr; decision</strong> framing:</p>
+  <ul>
+    <li><strong>Business understanding</strong> &mdash; turn a fuzzy goal into a measurable question and a decision it will drive.</li>
+    <li><strong>Data understanding</strong> &mdash; find, profile, and sanity-check the raw data; learn its quirks.</li>
+    <li><strong>Data preparation</strong> &mdash; clean, join, impute, and engineer features. This is usually the bulk of the effort.</li>
+    <li><strong>Modeling</strong> &mdash; fit candidate models and tune them.</li>
+    <li><strong>Evaluation</strong> &mdash; check the model against the <em>business</em> metric, not just the loss.</li>
+    <li><strong>Deployment</strong> &mdash; ship it, monitor it, and feed learnings back to the start.</li>
+  </ul>
+  <p>The arrows are a loop, not a line &mdash; you constantly revisit earlier stages. Most failures are <strong>not</strong> modeling failures. They cluster at the ends: a vague or misframed question (you optimized the wrong thing), and data/deployment (leakage, drift, or a model that never reaches a real decision). A 0.95 AUC model that answers the wrong question is worthless.</p>
+</InterviewProblem>
+<InterviewProblem question="A PM says 'use ML to reduce customer churn.' How would you scope this into the lifecycle before writing any model code?" difficulty="medium" tag="Case">
+  <p>I would resist jumping to a classifier and first nail down the front of the loop, because the framing determines everything downstream.</p>
+  <ul>
+    <li><strong>The decision</strong>: what action follows a prediction? A retention offer? If so, the useful target is not just &quot;will churn&quot; but &quot;will churn <em>and</em> can be saved by an offer&quot; (uplift), and the value is the incremental retained margin minus offer cost.</li>
+    <li><strong>Define churn precisely</strong>: voluntary cancel vs. lapsed usage vs. failed payment? Pick a labeling window (e.g. no activity for 30 days within the next 60).</li>
+    <li><strong>Unit and horizon</strong>: predict per-customer per-month? How far ahead must the alert fire to act?</li>
+    <li><strong>Data &amp; leakage</strong>: build features only from information available <em>before</em> the prediction time; exclude post-churn signals like cancellation confirmation emails.</li>
+    <li><strong>Success metric</strong>: tie evaluation to dollars (expected retained revenue, ROI of the campaign), with a model metric like PR-AUC as a proxy because churn is imbalanced.</li>
+    <li><strong>Baseline first</strong>: a rule (&quot;contacted support twice + low usage&quot;) gives a floor the model must beat to justify itself.</li>
+  </ul>
+  <p>Only after this do I build features and fit a model. The framing work <em>is</em> the job; the model is the easy part.</p>
+</InterviewProblem>
+<InterviewProblem question="Compare the data analyst, ML engineer, and research scientist roles across the lifecycle. Who owns deployment?" difficulty="medium" tag="Conceptual">
+  <p>The roles overlap but center on different stages of the same loop:</p>
+  <ul>
+    <li><strong>Data / product analyst</strong> &mdash; lives in business understanding, data understanding, and evaluation. Frames questions, runs EDA, builds dashboards and experiments (A/B tests), and translates results back into decisions. Optimizes for <em>insight and influence</em>.</li>
+    <li><strong>ML engineer</strong> &mdash; owns the path from a working model to a reliable production system: feature pipelines, training infrastructure, serving, latency, and monitoring for drift. Optimizes for <em>robustness and scale</em>, and typically <strong>owns deployment</strong>.</li>
+    <li><strong>Research scientist</strong> &mdash; pushes the modeling and evaluation frontier: novel methods, careful experimental design, and rigorous metrics. Optimizes for <em>correctness and novelty</em>, often further from production.</li>
+  </ul>
+  <p>At a small company one person may span all three; at a large one the handoffs between them are where bugs hide, so clear contracts (feature definitions, eval metrics, monitoring SLAs) matter more than any single role.</p>
+</InterviewProblem>
+<InterviewProblem question="Your offline model has AUC 0.92 but the launched feature shows no lift in the business metric. Diagnose, using the lifecycle as your map." difficulty="hard" tag="Case">
+  <p>High offline AUC with zero online lift is the classic &quot;great model, no decision value&quot; gap. I would walk the loop backwards and forwards to localize it.</p>
+  <ul>
+    <li><strong>Metric mismatch (evaluation &harr; business)</strong>: AUC measures ranking, but the decision may depend on calibrated probabilities or on the top-k slice. If we act only on the top 1%, evaluate precision@1% and the actual lift in <em>that</em> slice, not global AUC.</li>
+    <li><strong>Train/serve skew (data prep &harr; deployment)</strong>: features computed differently or with different freshness in production than in training. Check feature distributions offline vs. online.</li>
+    <li><strong>Leakage (data understanding)</strong>: a feature that was available at training time but not at decision time inflated offline AUC. Re-audit each feature&apos;s availability relative to prediction time.</li>
+    <li><strong>The model isn&apos;t the bottleneck (business understanding)</strong>: maybe predictions are accurate but the downstream action is weak &mdash; the retention offer no one redeems, or the alert that fires too late to act. Good prediction, broken decision.</li>
+    <li><strong>Experiment design</strong>: is the A/B test powered? No detectable lift can mean small true effect plus too few samples, not zero effect.</li>
+  </ul>
+  <p>The expected business value, not the loss, is what I am actually maximizing. Roughly,</p>
+  <MB>{"\\mathbb{E}[\\text{value}] = \\sum_{a} P(\\text{act} = a \\mid \\hat{y})\\,\\big(\\text{benefit}(a) - \\text{cost}(a)\\big)"}</MB>
+  <p>A model can lift <M>{"\\hat{y}"}</M> accuracy yet leave this sum unchanged if the action policy, costs, or the served features break the chain from prediction to decision.</p>
+</InterviewProblem>
+
+      </>
   );
 }

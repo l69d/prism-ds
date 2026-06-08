@@ -6,6 +6,7 @@ import { KeyIdea } from "@/components/content/key-idea";
 import { M, MB } from "@/components/content/math";
 import { CodeBlock } from "@/components/content/code-block";
 import { Quiz } from "@/components/content/quiz";
+import { InterviewProblem } from "@/components/content/interview-problem";
 
 export default function Lesson() {
   return (
@@ -97,6 +98,63 @@ print(clf.score(X_test, y_test))`}</CodeBlock>
         { text: "Because standardization speeds up the training phase", why: "kNN barely trains; standardization is about meaningful distances, not training speed." },
         { text: "Because it removes the need to choose k", why: "Scaling and choosing k are independent; you still must pick k." },
       ]} />
-    </>
+    <h2>Interview practice</h2>
+<InterviewProblem question="Why is k-NN called a lazy learner, and what are the practical consequences at training versus prediction time?" difficulty="easy" tag="Conceptual">
+  <p>k-NN is <strong>lazy</strong> because it does no real work at training time &mdash; it simply stores the labeled training set. There is no model to fit, no parameters to estimate; the entire dataset <strong>is</strong> the model. All computation is deferred to prediction time, where for each query point it must find the nearest neighbors.</p>
+  <p>Practical consequences:</p>
+  <ul>
+    <li><strong>Training is essentially free</strong> (just memorize), so adding new data is trivial &mdash; no retraining.</li>
+    <li><strong>Prediction is expensive.</strong> A brute-force query over <M>{"n"}</M> points in <M>{"d"}</M> dimensions costs <M>{"O(nd)"}</M> per query. This is the opposite of an eager learner like logistic regression, which is slow to fit but answers queries in <M>{"O(d)"}</M>.</li>
+    <li><strong>Memory-heavy:</strong> the whole training set must stay resident.</li>
+    <li>Because it is <strong>non-parametric</strong>, it makes no assumption about the shape of the decision boundary and can fit highly irregular boundaries given enough data.</li>
+  </ul>
+  <p>In practice, prediction cost is mitigated with spatial indexes (KD-trees, ball trees) for low-to-moderate <M>{"d"}</M>, or approximate nearest-neighbor structures (HNSW, LSH) for high <M>{"d"}</M>.</p>
+</InterviewProblem>
+<InterviewProblem question="How does the choice of k trade off bias and variance, and how would you pick it in practice?" difficulty="medium" tag="Conceptual">
+  <p>The hyperparameter <M>{"k"}</M> controls the <strong>smoothness</strong> of the decision boundary and sits squarely on the bias&ndash;variance spectrum.</p>
+  <ul>
+    <li><strong>Small <M>{"k"}</M> (e.g. <M>{"k=1"}</M>):</strong> low bias, high variance. The boundary is jagged and follows individual points, so a single mislabeled or noisy point can flip a prediction &mdash; classic overfitting.</li>
+    <li><strong>Large <M>{"k"}</M>:</strong> high bias, low variance. Predictions average over many neighbors, smoothing the boundary. In the limit <M>{"k=n"}</M>, every query returns the global majority class &mdash; classic underfitting.</li>
+  </ul>
+  <p>To choose <M>{"k"}</M>, use <strong>cross-validation</strong>: sweep a grid of <M>{"k"}</M> values, measure validation error (or F1 / AUC for imbalanced data), and pick the <M>{"k"}</M> minimizing it. A common heuristic starting point is <M>{"k \\approx \\sqrt{n}"}</M>, and for binary classification an <strong>odd <M>{"k"}</M></strong> avoids tie votes.</p>
+  <p>One caveat: error-versus-<M>{"k"}</M> is often U-shaped, so do not just grab the smallest training error &mdash; <M>{"k=1"}</M> has zero training error by construction (each point is its own nearest neighbor) yet generalizes poorly.</p>
+</InterviewProblem>
+<InterviewProblem question="A teammate runs k-NN on a dataset where one feature is salary (0-200000) and another is age (0-100), with raw Euclidean distance, and gets poor results. Diagnose and fix it." difficulty="medium" tag="Applied">
+  <p>The problem is <strong>unscaled features</strong>. Euclidean distance sums squared per-feature differences:</p>
+  <MB>{"d(x, q) = \\sqrt{\\sum_{j=1}^{d} (x_j - q_j)^2}"}</MB>
+  <p>A salary gap of 50,000 contributes <M>{"50000^2"}</M> to the sum, while an age gap of 50 contributes only <M>{"50^2"}</M>. Salary differences are about a million times larger in squared terms, so distance is <strong>completely dominated by salary</strong> and age is effectively ignored. The &quot;nearest&quot; neighbors are just whoever has the closest salary.</p>
+  <p><strong>Fix:</strong> put features on a comparable scale before computing distance. Two standard options:</p>
+  <ul>
+    <li><strong>Standardization</strong> (z-score): <M>{"x_j' = (x_j - \\mu_j) / \\sigma_j"}</M> &mdash; each feature has mean 0, variance 1.</li>
+    <li><strong>Min&ndash;max scaling:</strong> <M>{"x_j' = (x_j - \\min_j) / (\\max_j - \\min_j)"}</M> &mdash; each feature in <M>{"[0,1]"}</M>.</li>
+  </ul>
+  <p>Critically, fit the scaler on the <strong>training fold only</strong> and apply the same parameters to validation/test to avoid leakage. The clean way is a pipeline:</p>
+  <CodeBlock language="python" filename="scaled_knn.py">{`from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import StandardScaler
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.model_selection import cross_val_score
+
+# Scaler is fit only on training folds inside CV -> no leakage
+pipe = Pipeline([
+    ("scale", StandardScaler()),
+    ("knn", KNeighborsClassifier(n_neighbors=15)),
+])
+
+scores = cross_val_score(pipe, X, y, cv=5, scoring="f1_macro")
+print("CV F1:", scores.mean())`}</CodeBlock>
+  <p>If some features genuinely matter more, scaling plus learned per-feature weights (or a distance-weighted vote) generalizes this idea.</p>
+</InterviewProblem>
+<InterviewProblem question="Explain the curse of dimensionality and why it breaks k-NN. Sketch the intuition with the volume-of-a-shell argument." difficulty="hard" tag="Math">
+  <p>k-NN assumes that points close in feature space have similar labels. In <strong>high dimensions, the notion of &quot;close&quot; collapses</strong>: distances between points become nearly identical, so the nearest neighbor is barely nearer than the farthest, and neighbor-based prediction degrades to noise.</p>
+  <p><strong>Concentration of distances.</strong> For many distributions, as <M>{"d \\to \\infty"}</M> the ratio of nearest to farthest distance from a query tends to 1:</p>
+  <MB>{"\\lim_{d \\to \\infty} \\frac{\\operatorname{dist}_{\\max} - \\operatorname{dist}_{\\min}}{\\operatorname{dist}_{\\min}} \\to 0"}</MB>
+  <p>so all points sit at roughly the same distance and &quot;nearest&quot; loses meaning.</p>
+  <p><strong>Volume-of-a-shell intuition.</strong> Consider a unit hypercube in <M>{"d"}</M> dimensions and ask what fraction of its volume lies in a thin outer shell of width <M>{"\\epsilon"}</M> on each side. The interior is a cube of side <M>{"1 - 2\\epsilon"}</M>, so</p>
+  <MB>{"\\frac{V_{\\text{shell}}}{V_{\\text{cube}}} = 1 - (1 - 2\\epsilon)^d"}</MB>
+  <p>For <M>{"\\epsilon = 0.01"}</M> and <M>{"d = 200"}</M>, the interior fraction is <M>{"(0.98)^{200} \\approx 0.018"}</M>, so over <strong>98% of the volume is in the outer shell</strong>. Almost every point is near a boundary, and the data is extremely sparse &mdash; to keep a fixed local density you would need exponentially more samples in <M>{"d"}</M>.</p>
+  <p><strong>Fixes:</strong> reduce effective dimension (PCA, feature selection, or a learned embedding), use a metric learned for the task (e.g. Mahalanobis / LMNN), or switch to a model less reliant on raw local geometry. Approximate-NN indexes speed up search but do <strong>not</strong> cure the statistical degradation &mdash; that requires fewer, more informative dimensions.</p>
+</InterviewProblem>
+
+      </>
   );
 }
