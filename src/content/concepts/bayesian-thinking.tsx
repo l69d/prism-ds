@@ -6,6 +6,7 @@ import { KeyIdea } from "@/components/content/key-idea";
 import { M, MB } from "@/components/content/math";
 import { CodeBlock } from "@/components/content/code-block";
 import { Quiz } from "@/components/content/quiz";
+import { BetaPosteriorViz } from "@/components/viz/beta-posterior";
 
 export default function Lesson() {
   return (
@@ -13,6 +14,8 @@ export default function Lesson() {
       <p>Bayesian thinking treats probability as a measure of belief that you revise as evidence arrives. You start with what you thought before, weigh how surprising the data is, and end with an updated view.</p>
 
       <KeyIdea>A posterior belief is your prior belief reweighted by how well each hypothesis predicted the data you actually saw.</KeyIdea>
+
+      <BetaPosteriorViz />
 
       <h2>The three ingredients</h2>
       <p>Every Bayesian update combines three quantities:</p>

@@ -6,67 +6,130 @@ import { KeyIdea } from "@/components/content/key-idea";
 import { M, MB } from "@/components/content/math";
 import { CodeBlock } from "@/components/content/code-block";
 import { Quiz } from "@/components/content/quiz";
+import { ABTestSimulator } from "@/components/viz/ab-test-simulator";
 
 export default function Lesson() {
   return (
     <>
-      <p>An A/B test compares two versions of something &mdash; a button, an algorithm, a price &mdash; by randomly splitting users into groups and measuring a metric. The hard part isn&apos;t running it; it&apos;s designing it so the result actually means something.</p>
+      <p>
+        An A/B test (a randomized controlled experiment) is how data-driven teams establish{" "}
+        <strong>causation</strong>: randomly split users into a control (A) and a variant (B),
+        change one thing, and measure the difference. Done right it&apos;s the gold standard. Done
+        wrong it produces confident, expensive nonsense.
+      </p>
 
-      <KeyIdea>Randomization is the whole trick: if you assign users to A or B by coin flip, the two groups differ only by chance plus your change &mdash; so any reliable gap in the metric must be caused by the change.</KeyIdea>
+      <KeyIdea>
+        Randomization makes the two groups statistically identical <em>except</em> for the change you
+        made — so any reliable difference in the metric is <strong>caused</strong> by that change.
+        Everything else in A/B testing is about not fooling yourself with noise.
+      </KeyIdea>
 
-      <h2>Why randomize?</h2>
-      <p>Without random assignment, the groups differ in ways you can&apos;t see. If you let users pick, or ship the new version only to power users, you&apos;ve confounded the treatment with who they are. Randomization breaks that link: it balances both the variables you measured and the ones you forgot, on average.</p>
+      <ABTestSimulator />
+
+      <h2>Anatomy of an experiment</h2>
       <ul>
-        <li><strong>Control group (A):</strong> the existing experience, your baseline.</li>
-        <li><strong>Treatment group (B):</strong> the change you want to evaluate.</li>
-        <li><strong>One metric, decided up front:</strong> conversion rate, revenue per user, click-through.</li>
+        <li><strong>Hypothesis</strong> — a specific, falsifiable prediction (&quot;a shorter checkout raises conversion&quot;).</li>
+        <li><strong>Unit of randomization</strong> — usually the user (not the session), so a person sees a consistent experience.</li>
+        <li><strong>Primary metric / OEC</strong> — the one Overall Evaluation Criterion you&apos;ll decide on, chosen <em>before</em> launch.</li>
+        <li><strong>Guardrail metrics</strong> — things that must not get worse (latency, crashes, revenue, unsubscribes).</li>
       </ul>
 
-      <h2>How the decision works</h2>
       <Basic>
-        <p>Even if A and B were truly identical, the two groups would still show slightly different rates &mdash; that&apos;s just luck of who landed where. The question is whether the gap you observed is bigger than luck can plausibly explain. A statistical test answers exactly that: it asks &quot;if the change did nothing, how surprising is a gap this large?&quot; If the answer is &quot;very surprising,&quot; you conclude the change had a real effect.</p>
+        <p>
+          Think of it like a fair coin flip assigning each user to A or B. Because assignment is random,
+          the groups are alike in every way — age, device, intent — so if B converts more, the new
+          design is the reason, not a fluke of who landed where.
+        </p>
       </Basic>
       <Advanced>
-        <p>You set a null hypothesis that the two conversion rates are equal, <M>{"H_0: p_A = p_B"}</M>, and compute a test statistic. For two proportions the pooled two-sample z-test uses</p>
-        <MB>{"z = \\frac{\\hat{p}_B - \\hat{p}_A}{\\sqrt{\\hat{p}(1-\\hat{p})\\left(\\frac{1}{n_A} + \\frac{1}{n_B}\\right)}}"}</MB>
-        <p>where <M>{"\\hat{p}"}</M> is the pooled rate. The p-value is <M>{"P(|Z| \\geq |z| \\mid H_0)"}</M>. You reject <M>{"H_0"}</M> when it falls below your significance level <M>{"\\alpha"}</M> (commonly 0.05), which caps your false-positive rate. Crucially, <M>{"\\alpha"}</M> and the sample size must be fixed <em>before</em> you look at the data.</p>
+        <p>
+          Formally, randomization makes treatment assignment <strong>independent of potential outcomes</strong>,
+          so the difference in means is an unbiased estimate of the average treatment effect
+          {" "}<M>{"\\tau = \\mathbb{E}[Y(1) - Y(0)]"}</M>. For two proportions we test{" "}
+          <M>{"H_0: p_B = p_A"}</M> with the statistic
+        </p>
+        <MB>{"z = \\frac{\\hat{p}_B - \\hat{p}_A}{\\sqrt{\\hat{p}(1-\\hat{p})\\left(\\tfrac{1}{n_A}+\\tfrac{1}{n_B}\\right)}}"}</MB>
+        <p>where <M>{"\\hat{p}"}</M> is the pooled rate. The variance — and thus the sample size you need — depends on the baseline rate and the effect you want to detect.</p>
       </Advanced>
 
-      <Callout kind="pitfall" title="Peeking kills your guarantees">
-        Checking the p-value every day and stopping the moment it dips below 0.05 inflates your false-positive rate far above 5%. Each peek is another chance for noise to cross the line. Fix the sample size in advance, or use a sequential test designed for repeated looks.
+      <h2>Designing it: power, MDE, and duration</h2>
+      <p>
+        Before launching, run a <strong>power analysis</strong> (third tab above). You choose the
+        <strong> minimum detectable effect</strong> (MDE) — the smallest lift worth caring about — and a
+        target power (usually 80%), and it tells you the sample size and therefore the duration.
+      </p>
+      <Callout kind="warning" title="Run full weeks">
+        Traffic and behaviour follow weekly cycles (weekday vs weekend, payday). Always run for whole
+        weeks and pre-commit to the duration, or you bake seasonality into your result.
       </Callout>
 
-      <h2>Power and sample size</h2>
-      <p>A test that&apos;s too small can&apos;t detect a real effect &mdash; it has low <strong>power</strong>. Before launching, decide the smallest effect worth caring about and compute how many users you need to detect it with, say, 80% probability.</p>
+      <h2>The loopholes that fool people</h2>
+      <Callout kind="pitfall" title="Peeking / optional stopping">
+        Checking the p-value repeatedly and stopping the instant it dips below 0.05 inflates your false
+        positive rate from 5% to 20–30%+. The middle tab above demonstrates this on an A/A test (no real
+        effect). Fix: a fixed horizon, or proper <strong>sequential testing</strong> (mSPRT, group-sequential).
+      </Callout>
+      <Callout kind="pitfall" title="Multiple comparisons">
+        Test 20 variants or metrics at <M>{"\\alpha = 0.05"}</M> and you expect one false &quot;winner&quot;
+        by chance. Correct with Bonferroni or Benjamini-Hochberg, and pre-register a single primary metric.
+      </Callout>
+      <Callout kind="pitfall" title="Sample Ratio Mismatch (SRM)">
+        If you split 50/50 but observe 51/49 with large traffic, your randomization or logging is broken —
+        a chi-square test on the split will flag it. An SRM invalidates the whole experiment; never ignore it.
+      </Callout>
+      <ul>
+        <li><strong>Novelty &amp; primacy effects</strong> — users react to <em>change</em> itself; early lifts can decay. Watch the trend over time, not just the total.</li>
+        <li><strong>Simpson&apos;s paradox</strong> — an overall win can hide losses in every segment (or vice-versa) if the mix shifts. Check key segments.</li>
+        <li><strong>p-hacking / HARKing</strong> — slicing until something is &quot;significant&quot;, then telling a story around it. Decide the analysis before seeing the data.</li>
+        <li><strong>Twyman&apos;s law</strong> — any result that looks too good is probably an instrumentation bug. Investigate surprises before celebrating.</li>
+      </ul>
 
-      <CodeBlock language="python" filename="sample_size.py">{`from statsmodels.stats.power import NormalIndPower
+      <h2>Industry conventions &amp; procedure</h2>
+      <ul>
+        <li><strong>A/A test</strong> first to validate the pipeline (you should get ~5% false positives, no more).</li>
+        <li><strong>Ramp up</strong> exposure gradually (1% → 5% → 50%) with automatic guardrail alerts before full rollout.</li>
+        <li><strong>CUPED</strong> — use pre-experiment data to reduce variance, often cutting required sample size by 30–50%.</li>
+        <li><strong>Holdouts</strong> — keep a long-term control to measure cumulative and novelty-adjusted impact.</li>
+        <li>Report an <strong>effect size with a confidence interval</strong>, plus practical (not just statistical) significance.</li>
+      </ul>
+
+      <CodeBlock language="python" filename="ab_test.py">{`import numpy as np
+from statsmodels.stats.proportion import proportions_ztest
+from statsmodels.stats.power import NormalIndPower
+
+# --- analyze a finished test ---
+conv = np.array([1180, 1290])      # conversions A, B
+n    = np.array([12000, 12000])    # users per arm
+stat, p = proportions_ztest(conv, n)
+print(f"z={stat:.2f}  p={p:.4f}")
+
+# --- plan the next one: users per arm for a +5% relative lift ---
 from statsmodels.stats.proportion import proportion_effectsize
-
-# baseline 10% conversion; we care about a lift to 11%
-effect = proportion_effectsize(0.11, 0.10)
-
-n = NormalIndPower().solve_power(
-    effect_size=effect,
-    alpha=0.05,      # false-positive rate
-    power=0.80,      # chance of catching a real lift
-    ratio=1.0,       # equal-sized groups
-)
-print(f"Need ~{int(n)} users per group")  # ~14,750`}</CodeBlock>
-
-      <Callout kind="insight" title="Significance is not importance">
-        A huge sample can make a 0.01% lift &quot;statistically significant&quot; while being commercially worthless. Always report the effect size and a confidence interval, not just whether p &lt; 0.05.
-      </Callout>
+eff = proportion_effectsize(0.10, 0.105)
+n_per_arm = NormalIndPower().solve_power(eff, power=0.8, alpha=0.05, alternative="two-sided")
+print(f"need ~{n_per_arm:,.0f} users per arm")`}</CodeBlock>
 
       <MoreDepth>
-        <p>Real traffic violates the textbook assumption that observations are independent. The same user returns across days, sessions cluster within accounts, and network effects let treatment leak into control. The fix is to randomize at the unit you actually analyze &mdash; usually the user, not the page view &mdash; and to use cluster-robust standard errors or a CUPED-style variance reduction that regresses out pre-experiment behavior. Ignoring clustering quietly shrinks your standard errors and manufactures significance that won&apos;t replicate.</p>
+        <p>
+          Senior-level concerns go beyond the t-test. <strong>CUPED</strong> regresses out a pre-period
+          covariate <M>{"X"}</M>, replacing <M>{"Y"}</M> with <M>{"Y - \\theta(X - \\bar{X})"}</M> where
+          {" "}<M>{"\\theta"}</M> minimizes variance — pure variance reduction, no bias. In marketplaces and
+          social products, <strong>interference</strong> (network effects, shared inventory) breaks the
+          independence assumption; cluster or <strong>switchback</strong> randomization helps. And report
+          <strong> heterogeneous treatment effects</strong> — a flat average can hide that you helped one
+          segment and hurt another, which is where the real product decisions live.
+        </p>
       </MoreDepth>
 
-      <Quiz question="Halfway through a two-week test you see p = 0.04 and stop early, declaring the winner. What's the main problem?" options={[
-        { text: "Stopping early is fine because the p-value already crossed 0.05", why: "The threshold being crossed once is exactly the trap; early stopping changes what that threshold guarantees." },
-        { text: "Repeatedly peeking and stopping at the first significant result inflates the false-positive rate above the nominal alpha", correct: true, why: "Each look is another shot at random noise crossing the line, so the true false-positive rate exceeds your stated alpha unless you planned for it." },
-        { text: "Two weeks is always too short for any A/B test", why: "Duration depends on traffic and the required sample size; there is no universal minimum." },
-        { text: "A p-value of 0.04 is too close to 0.05 to ever trust", why: "0.04 is a valid result under a properly fixed design; the issue here is the optional stopping, not the exact value." },
-      ]} />
+      <Quiz
+        question="An experiment hits p = 0.04 on day 3 of a planned 14-day test. What should you do?"
+        options={[
+          { text: "Stop now and ship — it's significant.", why: "That's peeking / optional stopping, which inflates the false-positive rate far above 5%." },
+          { text: "Keep running to the pre-committed horizon, then decide.", correct: true, why: "Fixed-horizon (or a proper sequential method) keeps the error rate honest." },
+          { text: "Lower alpha to 0.01 and re-check tomorrow.", why: "Ad-hoc threshold changes mid-flight don't fix the peeking problem." },
+          { text: "Add more variants to be sure.", why: "More comparisons make false positives more likely, not less." },
+        ]}
+      />
     </>
   );
 }

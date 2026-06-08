@@ -6,6 +6,7 @@ import { KeyIdea } from "@/components/content/key-idea";
 import { M, MB } from "@/components/content/math";
 import { CodeBlock } from "@/components/content/code-block";
 import { Quiz } from "@/components/content/quiz";
+import { ConfidenceIntervalSimulator } from "@/components/viz/confidence-interval";
 
 export default function Lesson() {
   return (
@@ -13,6 +14,8 @@ export default function Lesson() {
       <p>We almost never see a whole population. Instead we draw a sample and use it to guess some unknown number &mdash; a mean, a proportion, a rate. An <strong>estimator</strong> is the recipe that turns data into that guess, and our job is to know when the recipe is trustworthy.</p>
 
       <KeyIdea>An estimator is a random variable: feed it a different sample and it spits out a different number. &quot;Good&quot; means its scatter is centered on the truth (low bias) and tightly packed (low variance).</KeyIdea>
+
+      <ConfidenceIntervalSimulator />
 
       <h2>Estimand, estimator, estimate</h2>
       <p>Keep three things separate. The <strong>estimand</strong> is the fixed-but-unknown population quantity (say, the true mean <M>{"\\mu"}</M>). The <strong>estimator</strong> is the procedure, like &quot;take the sample average.&quot; The <strong>estimate</strong> is the actual number you get from one dataset, like <M>{"42.7"}</M>.</p>

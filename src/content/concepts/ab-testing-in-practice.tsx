@@ -6,6 +6,7 @@ import { KeyIdea } from "@/components/content/key-idea";
 import { M, MB } from "@/components/content/math";
 import { CodeBlock } from "@/components/content/code-block";
 import { Quiz } from "@/components/content/quiz";
+import { ABTestSimulator } from "@/components/viz/ab-test-simulator";
 
 export default function Lesson() {
   return (
@@ -13,6 +14,8 @@ export default function Lesson() {
       <p>An A/B test is a randomized experiment that turns a product hunch into a defensible causal claim. But running one well is mostly about discipline: sizing it, not peeking, and squeezing out noise.</p>
 
       <KeyIdea>Randomization buys you causality for free; everything else in A/B testing is about controlling error rates so the ship/no-ship decision survives scrutiny.</KeyIdea>
+
+      <ABTestSimulator />
 
       <h2>Power: sizing the experiment before you run it</h2>
       <p>Before launch you commit to a sample size. Too small and a real win hides in the noise; too large and you waste traffic and time. The four levers are the false-positive rate <M>{"\\alpha"}</M>, the false-negative rate <M>{"\\beta"}</M>, the minimum detectable effect (MDE), and the metric&apos;s variance.</p>

@@ -6,6 +6,7 @@ import { KeyIdea } from "@/components/content/key-idea";
 import { M, MB } from "@/components/content/math";
 import { CodeBlock } from "@/components/content/code-block";
 import { Quiz } from "@/components/content/quiz";
+import { ConfidenceIntervalSimulator } from "@/components/viz/confidence-interval";
 
 export default function Lesson() {
   return (
@@ -13,6 +14,8 @@ export default function Lesson() {
       <p>A confidence interval gives you a range of plausible values for an unknown quantity, plus a number that says how often that procedure works. The catch is that the &quot;95%&quot; describes the method, not any single interval you happen to compute.</p>
 
       <KeyIdea>A 95% confidence interval means: if you repeated the whole experiment many times, about 95% of the intervals you build this way would contain the true value. It does <strong>not</strong> mean there is a 95% chance the truth lies in your one specific interval.</KeyIdea>
+
+      <ConfidenceIntervalSimulator />
 
       <h2>What it estimates</h2>
       <p>You almost never know a population&apos;s true mean. You collect a sample, compute a sample mean, and that estimate jitters from sample to sample. A confidence interval wraps your estimate in a margin that reflects that jitter:</p>

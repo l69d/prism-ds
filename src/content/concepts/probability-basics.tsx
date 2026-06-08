@@ -6,6 +6,7 @@ import { KeyIdea } from "@/components/content/key-idea";
 import { M, MB } from "@/components/content/math";
 import { CodeBlock } from "@/components/content/code-block";
 import { Quiz } from "@/components/content/quiz";
+import { BayesGridViz } from "@/components/viz/bayes-grid";
 
 export default function Lesson() {
   return (
@@ -13,6 +14,8 @@ export default function Lesson() {
       <p>Probability is the grammar of uncertainty. It lets us reason carefully about events we cannot predict, update our beliefs when evidence arrives, and tell the difference between a coincidence and a real signal.</p>
 
       <KeyIdea>Conditional probability is just probability restricted to a smaller world. Once you observe that <M>{"B"}</M> happened, you throw away every outcome where it didn&apos;t and renormalize what remains.</KeyIdea>
+
+      <BayesGridViz />
 
       <h2>The building blocks</h2>
       <p>An <strong>event</strong> is a set of outcomes, and its probability is a number in <M>{"[0, 1]"}</M>. From there, three ideas do almost all the work:</p>
